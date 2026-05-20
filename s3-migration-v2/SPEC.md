@@ -8,7 +8,6 @@ The migration targets about 800 million objects, so the tool must support multi-
 
 ## Non-Goals
 
-- Do not implement the real decrypt logic in this project.
 - Do not migrate historical S3 object versions.
 - Do not preserve source object metadata, tags, ACLs, storage class, or client-side encryption metadata.
 - Do not delete extra objects from the target bucket.
@@ -84,7 +83,7 @@ Rules:
 
 ## Decrypt Interface
 
-The project must define a decryptor interface for the user to implement with existing sample code:
+The project defines a decryptor interface so callers can either use the built-in implementation or supply their own:
 
 ```java
 public interface S3ObjectDecryptor {
@@ -99,7 +98,36 @@ Contract:
 - The decryptor writes the decrypted object to a local file and returns that file path.
 - The migration tool uploads the returned file and then deletes it.
 - If the decryptor throws before returning a path, the decryptor implementation owns cleanup of any partial files it created.
-- The migration tool must not depend on Amazon S3 Encryption Client directly.
+- The migration tool may bundle a default implementation backed by the AWS S3 Encryption Client. Callers who need a different scheme provide their own `S3ObjectDecryptor` bean, which overrides the bundled one.
+
+## Built-in Decryptor: Legacy KMS
+
+The project ships a default decryptor backed by the AWS Java SDK v1 `AmazonS3EncryptionV2` client with a KMS encryption materials provider. It is intended for source buckets whose objects were written by the AWS S3 Encryption Client V2 against a KMS key.
+
+Selection:
+
+- Controlled by `migration.decrypt.legacy-kms.enabled`. When `true`, the bundled `LegacyKmsS3ObjectDecryptor` is registered as the `S3ObjectDecryptor` bean.
+- When `false` (default), no bundled decryptor is registered. The job aborts unless the caller provides their own `S3ObjectDecryptor` bean on the classpath.
+- A user-provided `S3ObjectDecryptor` bean always wins over the bundled one.
+
+Configuration:
+
+- `migration.decrypt.legacy-kms.kms-key-id`: required when enabled. KMS key ARN or alias the source objects were encrypted under.
+- `migration.decrypt.legacy-kms.kms-region`: optional. Defaults to the S3 region when omitted.
+- `migration.decrypt.legacy-kms.crypto-mode`: `AUTHENTICATED_ENCRYPTION` (default) or `STRICT_AUTHENTICATED_ENCRYPTION`.
+- `migration.decrypt.legacy-kms.storage-mode`: `OBJECT_METADATA` (default) or `INSTRUCTION_FILE`.
+
+Behavior:
+
+- Writes the decrypted object to a temp file under `migration.paths.temp-dir` and returns the path.
+- On any failure, deletes the partial temp file (best effort) and throws `DecryptException`.
+- The temp directory is created once at startup, not per object.
+- Relies on the SDK v1 client's default retry policy for transient S3/KMS errors. Object-level failures surface to `failed.log`.
+
+Scope limitations:
+
+- Only decrypts objects encrypted by the V2 encryption client. Objects written by the legacy V1 `EncryptionOnly` crypto mode cannot be read by `AmazonS3EncryptionV2` and will be recorded as object-level failures.
+- For source buckets with mixed-mode historical data, callers must provide their own decryptor.
 
 ## Upload Behavior
 

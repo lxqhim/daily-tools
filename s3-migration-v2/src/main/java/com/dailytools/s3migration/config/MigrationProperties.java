@@ -5,8 +5,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import java.time.Duration;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +43,9 @@ public class MigrationProperties {
     @Valid
     private Observability observability = new Observability();
 
+    @Valid
+    private Decrypt decrypt = new Decrypt();
+
     public void validateForRun() {
         if (job.mode == null) {
             throw new IllegalArgumentException("migration.job.mode is required");
@@ -61,6 +64,9 @@ public class MigrationProperties {
         }
         if (job.mode == JobMode.RETRY && paths.retryInputs.isEmpty()) {
             throw new IllegalArgumentException("migration.paths.retry-inputs is required for retry");
+        }
+        if (decrypt.legacyKms.enabled && isBlank(decrypt.legacyKms.kmsKeyId)) {
+            throw new IllegalArgumentException("migration.decrypt.legacy-kms.kms-key-id is required when legacy KMS decrypt is enabled");
         }
     }
 
@@ -138,6 +144,14 @@ public class MigrationProperties {
 
     public void setObservability(Observability observability) {
         this.observability = observability;
+    }
+
+    public Decrypt getDecrypt() {
+        return decrypt;
+    }
+
+    public void setDecrypt(Decrypt decrypt) {
+        this.decrypt = decrypt;
     }
 
     public static class Job {
@@ -358,5 +372,78 @@ public class MigrationProperties {
         public void setMaxFailedLogBytes(long maxFailedLogBytes) {
             this.maxFailedLogBytes = maxFailedLogBytes;
         }
+    }
+
+    public static class Decrypt {
+        @Valid
+        private LegacyKms legacyKms = new LegacyKms();
+
+        public LegacyKms getLegacyKms() {
+            return legacyKms;
+        }
+
+        public void setLegacyKms(LegacyKms legacyKms) {
+            this.legacyKms = legacyKms;
+        }
+    }
+
+    public static class LegacyKms {
+        private boolean enabled;
+        private String kmsKeyId;
+        private String kmsRegion;
+        @NotNull
+        private LegacyKmsCryptoMode cryptoMode = LegacyKmsCryptoMode.AUTHENTICATED_ENCRYPTION;
+        @NotNull
+        private LegacyKmsStorageMode storageMode = LegacyKmsStorageMode.OBJECT_METADATA;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getKmsKeyId() {
+            return kmsKeyId;
+        }
+
+        public void setKmsKeyId(String kmsKeyId) {
+            this.kmsKeyId = kmsKeyId;
+        }
+
+        public String getKmsRegion() {
+            return kmsRegion;
+        }
+
+        public void setKmsRegion(String kmsRegion) {
+            this.kmsRegion = kmsRegion;
+        }
+
+        public LegacyKmsCryptoMode getCryptoMode() {
+            return cryptoMode;
+        }
+
+        public void setCryptoMode(LegacyKmsCryptoMode cryptoMode) {
+            this.cryptoMode = cryptoMode;
+        }
+
+        public LegacyKmsStorageMode getStorageMode() {
+            return storageMode;
+        }
+
+        public void setStorageMode(LegacyKmsStorageMode storageMode) {
+            this.storageMode = storageMode;
+        }
+    }
+
+    public enum LegacyKmsCryptoMode {
+        AUTHENTICATED_ENCRYPTION,
+        STRICT_AUTHENTICATED_ENCRYPTION
+    }
+
+    public enum LegacyKmsStorageMode {
+        OBJECT_METADATA,
+        INSTRUCTION_FILE
     }
 }

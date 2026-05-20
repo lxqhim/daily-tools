@@ -1,7 +1,7 @@
 package com.dailytools.s3migration.config;
 
-import com.dailytools.s3migration.decrypt.MissingS3ObjectDecryptor;
 import com.dailytools.s3migration.decrypt.S3ObjectDecryptor;
+import com.dailytools.s3migration.decrypt.LegacyKmsS3ObjectDecryptor;
 import com.dailytools.s3migration.s3.AwsS3ObjectReader;
 import com.dailytools.s3migration.s3.S3ObjectReader;
 import com.dailytools.s3migration.upload.S3TargetUploader;
@@ -9,6 +9,7 @@ import com.dailytools.s3migration.upload.TargetUploader;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -48,7 +49,8 @@ public class AwsConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    S3ObjectDecryptor s3ObjectDecryptor() {
-        return new MissingS3ObjectDecryptor();
+    @ConditionalOnProperty(prefix = "migration.decrypt.legacy-kms", name = "enabled", havingValue = "true")
+    S3ObjectDecryptor legacyKmsS3ObjectDecryptor(MigrationProperties properties) {
+        return new LegacyKmsS3ObjectDecryptor(properties);
     }
 }
