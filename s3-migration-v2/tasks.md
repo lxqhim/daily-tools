@@ -31,11 +31,13 @@ Acceptance criteria:
 - Parse required columns: bucket, key, last modified date, size, ETag.
 - URL-decode object keys.
 - Expose rows as a streaming iterator or callback.
+- Report isolated row-level parse failures without aborting the full data file.
 
 Acceptance criteria:
 
 - Tests cover URL-encoded keys.
 - Tests cover malformed rows.
+- Tests cover continuing after an isolated malformed row.
 - Tests prove parser does not require loading a whole CSV file into memory.
 
 ## Task 4: Hash Sharding
@@ -69,12 +71,15 @@ Acceptance criteria:
 - Implement append-only JSONL failed log writer.
 - Include run id, mode, shard, source bucket, target bucket, key, inventory fields, error code, message, and timestamp.
 - Implement failed log reader for retry mode.
+- Use failed log entries for isolated malformed inventory rows when they can be assigned to a shard.
+- Enforce a configurable failed log size limit and fail fast when exceeded.
 
 Acceptance criteria:
 
 - Tests write and read JSONL records.
 - Tests preserve keys with special characters.
 - Tests handle multiple failed log input files for retry.
+- Tests fail fast when the failed log size limit would be exceeded.
 
 ## Task 7: Decryptor Interface
 
@@ -139,6 +144,7 @@ Acceptance criteria:
 - Allow delta only for `COMPLETED` and `COMPLETED_WITH_FAILURES`.
 - Filter rows by `LastModifiedDate >= previousWatermark`.
 - Advance watermark only after full manifest scan.
+- Base watermark advancement on observed row-level `LastModifiedDate`, not inventory manifest creation time.
 
 Acceptance criteria:
 
@@ -146,6 +152,7 @@ Acceptance criteria:
 - Tests allow delta for `COMPLETED` and `COMPLETED_WITH_FAILURES`.
 - Tests cover inclusive watermark boundary.
 - Tests verify watermark is not advanced after aborted run.
+- Tests verify manifest creation time is not used as a watermark.
 
 ## Task 12: Retry Job
 
@@ -153,18 +160,22 @@ Acceptance criteria:
 - Reprocess each failed key through decrypt, upload, and cleanup.
 - Write remaining failures to a new retry failed log.
 - Do not modify baseline status or delta watermark.
+- Update retry attempt counters in state.
 
 Acceptance criteria:
 
 - Tests cover successful retry.
 - Tests cover retry failure written to retry failed log.
 - Tests verify baseline and delta state are not advanced by retry.
+- Tests verify retry counters are written to state.
 
 ## Task 13: Worker Pool and Backpressure
 
 - Add bounded queue worker execution.
 - Make worker count configurable.
 - Keep file-level checkpointing safe by waiting for all tasks from a data file before marking it complete.
+- Reuse one worker pool across all data files in a job.
+- Emit configurable intra-file progress logs while scanning or waiting on workers.
 
 Acceptance criteria:
 

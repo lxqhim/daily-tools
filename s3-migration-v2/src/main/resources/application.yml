@@ -1,0 +1,17 @@
+spring:
+  main:
+    web-application-type: none
+
+migration:
+  enabled: true
+  s3:
+    region: us-east-1
+  worker:
+    concurrency: 8
+    queue-size: 64
+  upload:
+    multipart-threshold-bytes: 134217728
+    multipart-part-size-bytes: 67108864
+  observability:
+    progress-log-interval: 5m
+    max-failed-log-bytes: 10737418240

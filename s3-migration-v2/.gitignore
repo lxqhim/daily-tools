@@ -1,0 +1,5 @@
+target/
+*.log
+state.json
+failed*.log
+tmp/

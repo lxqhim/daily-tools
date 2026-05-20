@@ -125,10 +125,15 @@ For each data file:
 7. Submit owned candidates to the worker pool.
 8. At end of file, wait for all tasks submitted from that file to finish.
 9. Update success, failure, and skipped counts.
-10. Mark that data file complete in `state.json`.
-11. Atomically write `state.json`.
+10. Update observed maximum `LastModifiedDate` and candidate watermark for the current mode.
+11. Mark that data file complete in `state.json`.
+12. Atomically write `state.json`.
 
 Checkpointing happens at data file boundaries. If the process crashes halfway through a CSV file, the next run reprocesses that whole CSV file. This is intentional because duplicate target uploads are acceptable and file-boundary checkpointing avoids losing queued work.
+
+If one CSV row is malformed but the row can be isolated, the reader records an `INVENTORY_ROW_PARSE_FAILED` entry in `failed.log`, counts it as a failed row for the owning shard, and continues parsing later rows. Schema-level failures or unreadable gzip/data files remain run-level failures.
+
+While processing a large data file, the reader emits an intra-file progress log every `migration.observability.progress-log-interval`. The progress line includes elapsed time, scanned rows, submitted rows, in-flight workers, current file counters, and observed maximum `LastModifiedDate`.
 
 ## 6. CSV Row Flow
 
@@ -204,19 +209,27 @@ If rejected, delta exits before downloading or processing the delta manifest.
 When allowed:
 
 1. Load the previous delta watermark.
-2. If no delta watermark exists, use the baseline inventory timestamp or configured baseline watermark.
+2. If no delta watermark exists, use the configured initial watermark; if none exists, use `Instant.EPOCH`.
 3. Download and parse the supplied daily manifest.
 4. Stream every inventory data file.
 5. Submit only rows whose `LastModifiedDate >= previousWatermark`.
 6. Apply the same hash shard rule.
 7. Process matching objects through the same decrypt-upload-cleanup flow.
 8. Write object-level failures to the delta failed log.
-9. After the whole manifest is scanned, advance the delta watermark.
-10. Atomically write the updated state.
+9. Track the maximum `LastModifiedDate` actually observed for owned rows in this delta run.
+10. At each completed data file boundary, write `deltaObservedMaxLastModified` and `deltaCandidateWatermark` to `state.json`.
+11. After the whole manifest is scanned, advance the committed `deltaWatermark` to that observed maximum only if it is newer than the previous watermark.
+12. Atomically write the updated state.
 
 The comparison uses `>=`, not `>`, so objects on the boundary may be processed twice. This avoids missing objects with equal timestamps.
 
 If the delta run aborts before scanning the full manifest, do not advance the watermark. The next run should retry from the previous safe watermark.
+
+If the delta run resumes after some data files were already checkpointed, the saved `deltaObservedMaxLastModified` is loaded and folded into the candidate watermark. This prevents losing the observed maximum from files that are skipped on resume.
+
+The inventory report date, folder date, and manifest `creationTimestamp` are not used as watermarks. For example, an inventory delivered around `T-28` may still only reflect object rows up to `T-30` or `T-31`; using the report date would skip objects. The watermark is based on row-level `LastModifiedDate` values that the shard actually scanned, or on an operator-provided initial watermark.
+
+Run-level delta failures write `lastErrorCode`, `lastErrorMessage`, and `lastErrorAt` into `state.json` and log the error. Delta has no separate terminal status; the committed `deltaWatermark` remains unchanged on failure.
 
 ## 9. Single Object Processing Flow
 
@@ -282,6 +295,8 @@ Object-level failures do not stop the job. They affect final status:
 - baseline with object failures becomes `COMPLETED_WITH_FAILURES` if the whole manifest was scanned.
 - delta with object failures keeps the same watermark rule: watermark advances only if the whole manifest was scanned.
 
+If a failed log reaches `migration.observability.max-failed-log-bytes`, the next append fails the job. Operators should treat this as a systemic failure signal, inspect the recent failed records, fix the cause, and resume or retry with an explicit decision.
+
 Run-level failures are different. Examples:
 
 - cannot download manifest.
@@ -310,6 +325,7 @@ For each failed record:
 4. Upload the returned local file to the target bucket with the same key.
 5. Delete the local file after the upload attempt.
 6. Write any remaining failure to a new retry failed log.
+7. Update retry, success, and failure counters in `state.json`.
 
 Retry does not mark baseline complete and does not advance delta watermark.
 
@@ -430,3 +446,7 @@ Worker responsibilities:
 The bounded queue prevents the reader from submitting unlimited work and filling memory.
 
 State checkpointing waits for all workers submitted from the current inventory data file before marking that file complete.
+
+State writes are owned by the reader thread at data file boundaries. Worker threads do not mutate `state.json`; they only return object results and append failures through a synchronized failed-log writer.
+
+One worker pool is shared for the lifetime of a baseline or delta job. Data-file checkpointing still waits for all tasks submitted from the current inventory data file before moving to the next file.

@@ -30,6 +30,13 @@ The CLI must support these modes:
 - `delta`: process a daily inventory manifest after the current shard baseline is finished or finished with object-level failures.
 - `retry`: read one or more failed JSONL files and retry those objects.
 
+## Operational Guardrails
+
+Configurable guardrails:
+
+- `migration.observability.progress-log-interval`: controls intra-file progress logs while a large inventory data file is being scanned or while the reader is waiting on workers. Default: `5m`.
+- `migration.observability.max-failed-log-bytes`: maximum size for each failed log before the job fails fast. Default: `10737418240` bytes, or 10 GiB.
+
 ## Inventory Input
 
 The user supplies the S3 path to a daily S3 Inventory `manifest.json`.
@@ -119,10 +126,14 @@ The state must track:
 - baseline manifest URI.
 - baseline status.
 - baseline inventory data file progress.
+- baseline observed maximum `LastModifiedDate`.
 - delta watermark.
+- delta observed maximum `LastModifiedDate`.
+- delta candidate watermark for the current in-progress manifest.
 - delta manifest progress.
 - success, failed, skipped, and retried counts.
 - timestamps for job start, last checkpoint, and job completion.
+- last run-level error code, message, and timestamp for operator diagnosis.
 
 Baseline statuses:
 
@@ -168,11 +179,17 @@ Rules:
 - Accept duplicate processing.
 - Advance the delta watermark only after the whole manifest is scanned successfully.
 - If a delta manifest cannot be fully scanned, do not advance the watermark.
+- During an in-progress manifest scan, write observed maximum `LastModifiedDate` and candidate watermark at inventory data file checkpoints. These are progress hints and resume inputs, not the committed delta lower bound.
 
 Initial delta watermark:
 
-- After baseline completes, initialize the delta lower bound from the baseline inventory timestamp or an explicitly configured baseline watermark.
+- After baseline completes, initialize the delta lower bound from an explicitly configured baseline watermark if present.
+- If no explicit watermark is configured, initialize from the maximum `LastModifiedDate` actually observed for this shard while scanning the baseline manifest.
+- If the baseline shard observes no owned rows, initialize from `Instant.EPOCH`.
+- Do not use the inventory folder date or manifest `creationTimestamp` as the delta watermark. Those values describe report generation or delivery timing, not the freshness of object rows.
 - The first delta run after baseline must catch objects written or overwritten after the baseline inventory snapshot.
+- After each successful delta scan, advance the watermark only to the maximum `LastModifiedDate` actually observed for this shard in that delta run. If the delta run observes no newer owned rows, keep the previous watermark.
+- The committed `deltaWatermark` is updated only after the whole manifest succeeds; the in-progress `deltaCandidateWatermark` may be written earlier for visibility and resume safety.
 
 ## Failed Log
 
@@ -203,6 +220,8 @@ Failure examples:
 
 Run-level fatal errors, such as manifest download failure or unreadable manifest JSON, should fail the job and update state rather than being logged as object-level failures.
 
+If appending a failed record would push the failed log over `migration.observability.max-failed-log-bytes`, fail fast. This prevents a systemic decrypt/upload/configuration failure from producing unbounded local logs and filling the disk.
+
 ## Retry Job
 
 Retry mode reads one or more failed JSONL files.
@@ -214,7 +233,18 @@ Rules:
 - Upload to the target bucket with the same key.
 - Delete the local decrypted file after the upload attempt.
 - Write remaining failures to a new retry failed log.
-- Retry mode does not update baseline or delta watermarks.
+- Update success, failed, and retried counters in `state.json`.
+- Retry mode does not update baseline status or delta watermarks.
+
+## Logging
+
+The CLI logs operator-visible progress to stdout/stderr through SLF4J:
+
+- job start and completion for baseline, delta, and retry.
+- each completed inventory data file with success, failed, skipped, and retried counts.
+- intra-file progress while scanning or waiting on workers, controlled by `migration.observability.progress-log-interval`.
+- delta watermark initialization and advancement.
+- run-level aborts with error details.
 
 ## Final Verification
 
