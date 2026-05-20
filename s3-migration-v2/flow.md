@@ -63,7 +63,56 @@ Each server should use a stable shard index. For example, with 8 servers:
 
 Do not change `shard.total` halfway through the migration unless the whole shard plan is restarted.
 
-## 3. Startup Flow
+## 3. EC2 Capacity Plan
+
+Recommended default production fleet:
+
+- Instance type: `c7i.4xlarge`.
+- Count: 8 servers.
+- Shard layout: `shard.total=8`, with one stable `shard.index` per server.
+- Initial worker setting: `migration.worker.concurrency=8`.
+- JVM heap: start with `-Xms8g -Xmx12g`; increase only if GC or heap telemetry shows pressure.
+- Local disk: attach a dedicated EBS volume for state, failed logs, and temp files. Start with 1 TiB `gp3`; increase if the largest object size or retry log size requires it.
+
+Why this is the default:
+
+- The job is a mixed network, CPU, KMS, and disk-temp workload. It streams inventory, downloads one source object, decrypts locally, uploads one target object, and deletes the temp file.
+- `c7i.4xlarge` gives 16 vCPU and 32 GiB memory per server, which is enough headroom for 8 decrypt/upload workers without using memory-optimized instances.
+- 8 servers keep shard fan-out simple and match the intended 4-8 server design while giving enough parallelism for 800M objects.
+- Larger instances do not remove KMS or S3 request-rate limits. Scale instance count or worker concurrency only after checking throttling metrics.
+
+Sizing alternatives:
+
+- Conservative start: 4 x `c7i.4xlarge`, `shard.total=4`, `worker.concurrency=8`. Use this only for a dry run, small object counts, or when baseline can take materially longer.
+- Recommended production: 8 x `c7i.4xlarge`, `shard.total=8`, `worker.concurrency=8`.
+- If CPU is consistently above 75%, network is not saturated, and KMS throttling is absent: try `worker.concurrency=12` or move to `c7i.8xlarge`.
+- If network or EBS throughput is the bottleneck: move to `c7i.12xlarge` before increasing worker count aggressively.
+- If heap or native memory pressure appears despite streaming fixes: use `m7i.4xlarge` as the memory-heavier alternative, but keep the same shard plan.
+
+Do not use `c7i-flex` for the main production baseline. Flex can be fine for short tests, but a long migration may keep CPU and network busy for many hours; use standard `c7i` for steadier capacity.
+
+Before full production, run a 1% sample or a bounded prefix test:
+
+1. Start with 2 servers of the chosen type and the same command-line shape as production.
+2. Measure per-server objects/sec, MB/sec download, MB/sec upload, CPU, heap, GC pause, EBS queue depth, KMS throttling, and failed object rate.
+3. Estimate full baseline duration:
+
+   ```text
+   estimated_seconds = total_objects / (measured_objects_per_second_per_server * server_count)
+   ```
+
+4. If the estimate is too slow and KMS/S3 throttling is not visible, scale to 8 servers.
+5. If KMS throttling appears, reduce `worker.concurrency` first. More EC2 will make throttling worse.
+
+Operational rules:
+
+- Place all migration EC2 instances in the same AWS Region as the source and target buckets.
+- Use the same instance type for all shards unless there is a clear reason not to. Uneven capacity makes completion time harder to reason about.
+- Keep `state.json` and `failed.log` on durable EBS, not on instance-only ephemeral storage.
+- On replacement, restore or attach the shard's state and failed logs, then restart with the same `shard.index`.
+- Treat KMS and S3 throttling as fleet-level signals. If throttling appears, tune total concurrency across all servers, not only a single server.
+
+## 4. Startup Flow
 
 On startup, the tool loads configuration and validates:
 
@@ -92,7 +141,7 @@ If `state.json` exists:
 - verify source and target bucket match, unless an explicit override is configured.
 - resume from the recorded checkpoint.
 
-## 4. Manifest Download Flow
+## 5. Manifest Download Flow
 
 For `baseline` and `delta`, the tool receives a URI like:
 
@@ -110,7 +159,7 @@ The tool:
 
 The tool must not assume a fixed `data/` path. The manifest is the source of truth.
 
-## 5. Inventory Data File Flow
+## 6. Inventory Data File Flow
 
 Each manifest usually points to many `.csv.gz` data files.
 
@@ -135,7 +184,7 @@ If one CSV row is malformed but the row can be isolated, the reader records an `
 
 While processing a large data file, the reader emits an intra-file progress log every `migration.observability.progress-log-interval`. The progress line includes elapsed time, scanned rows, submitted rows, in-flight workers, current file counters, and observed maximum `LastModifiedDate`.
 
-## 6. CSV Row Flow
+## 7. CSV Row Flow
 
 For each CSV row:
 
@@ -159,7 +208,7 @@ SHA-256(decodedObjectKey) unsigned mod shard.total == shard.index
 
 Rows not owned by this shard are counted as skipped.
 
-## 7. Baseline Flow
+## 8. Baseline Flow
 
 Baseline is the first full pass for a shard.
 
@@ -187,7 +236,7 @@ Completion behavior:
 
 The operator can inspect `state.json` and `failed.log` to decide whether `COMPLETED_WITH_FAILURES` is acceptable.
 
-## 8. Delta Flow
+## 9. Delta Flow
 
 Delta is a daily catch-up pass after baseline.
 
@@ -231,7 +280,7 @@ The inventory report date, folder date, and manifest `creationTimestamp` are not
 
 Run-level delta failures write `lastErrorCode`, `lastErrorMessage`, and `lastErrorAt` into `state.json` and log the error. Delta has no separate terminal status; the committed `deltaWatermark` remains unchanged on failure.
 
-## 9. Single Object Processing Flow
+## 10. Single Object Processing Flow
 
 Each owned object is processed by a worker.
 
@@ -268,7 +317,7 @@ If local cleanup fails:
 - record or warn about the cleanup failure.
 - continue processing other objects.
 
-## 10. Failed Log Flow
+## 11. Failed Log Flow
 
 Object-level failures are appended to a JSONL file.
 
@@ -306,7 +355,7 @@ Run-level failures are different. Examples:
 
 Run-level failures stop the job and leave the state as not safely complete.
 
-## 11. Retry Flow
+## 12. Retry Flow
 
 Retry mode is independent from baseline and delta watermarks.
 
@@ -329,7 +378,7 @@ For each failed record:
 
 Retry does not mark baseline complete and does not advance delta watermark.
 
-## 12. Resume Flow
+## 13. Resume Flow
 
 When a job restarts:
 
@@ -343,7 +392,7 @@ If the previous process died mid-file, the data file was not checkpointed and is
 
 If the previous process died after a file checkpoint was written, the next run starts from the following file.
 
-## 13. Cutover Flow
+## 14. Cutover Flow
 
 The intended operational sequence is anchored around cutover date `T`.
 
@@ -395,7 +444,7 @@ After final delta:
 
 The target bucket may contain extra keys caused by source deletes during the migration window. Extra target keys are ignored by this migration plan.
 
-## 14. Final Verification Flow
+## 15. Final Verification Flow
 
 Recommended verification uses inventories, not per-object HEAD requests.
 
@@ -412,7 +461,7 @@ If missing source keys are found:
 - run retry mode.
 - regenerate or refresh the verification report.
 
-## 15. Local Disk Flow
+## 16. Local Disk Flow
 
 The decryptor writes decrypted files to local disk. The migration tool uploads and deletes them.
 
@@ -425,7 +474,7 @@ Operational expectations:
 
 The migration tool should not keep decrypted files as durable output.
 
-## 16. Concurrency Flow
+## 17. Concurrency Flow
 
 The reader and worker pool are separated.
 

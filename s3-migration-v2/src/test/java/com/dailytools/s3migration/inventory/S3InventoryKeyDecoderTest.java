@@ -20,6 +20,13 @@ class S3InventoryKeyDecoderTest {
     }
 
     @Test
+    void returnsSameStringWhenKeyHasNoPercentEncoding() {
+        String key = "folder/a+b/normal-key.txt";
+
+        assertThat(S3InventoryKeyDecoder.decode(key)).isSameAs(key);
+    }
+
+    @Test
     void rejectsInvalidPercentEncoding() {
         assertThatThrownBy(() -> S3InventoryKeyDecoder.decode("folder/%ZZ.txt"))
                 .isInstanceOf(IllegalArgumentException.class);

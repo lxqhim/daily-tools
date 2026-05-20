@@ -11,6 +11,7 @@ import com.dailytools.s3migration.shard.HashShardAssigner;
 import com.dailytools.s3migration.state.MigrationState;
 import com.dailytools.s3migration.state.StateStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -28,7 +29,7 @@ class MigrationServiceRetryTest {
     void retryUpdatesStateCounters() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         MigrationProperties properties = properties();
-        FailedLog failedLog = new FailedLog(objectMapper);
+        FailedLog failedLog = new StreamingOnlyFailedLog(objectMapper);
         failedLog.append(properties.getPaths().getRetryInputs().getFirst(), failedRecord("a.txt"));
         failedLog.append(properties.getPaths().getRetryInputs().getFirst(), failedRecord("b.txt"));
         ObjectProcessor objectProcessor = new ObjectProcessor(
@@ -85,5 +86,17 @@ class MigrationServiceRetryTest {
         properties.getPaths().setRetryFailedLog(tempDir.resolve("retry-failed.log"));
         properties.getPaths().setRetryInputs(List.of(tempDir.resolve("failed.log")));
         return properties;
+    }
+
+    private static class StreamingOnlyFailedLog extends FailedLog {
+
+        private StreamingOnlyFailedLog(ObjectMapper objectMapper) {
+            super(objectMapper);
+        }
+
+        @Override
+        public List<FailedRecord> readAll(List<Path> paths) throws IOException {
+            throw new AssertionError("retry mode must stream failed records instead of loading all records");
+        }
     }
 }

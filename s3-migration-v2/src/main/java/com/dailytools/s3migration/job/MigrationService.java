@@ -223,7 +223,7 @@ public class MigrationService {
 
         ProcessingSummary summary = new ProcessingSummary();
         try {
-            for (FailedRecord record : failedLog.readAll(properties.getPaths().getRetryInputs())) {
+            failedLog.readEach(properties.getPaths().getRetryInputs(), record -> {
                 InventoryObject object = new InventoryObject(
                         properties.getS3().getSourceBucket(),
                         record.key(),
@@ -232,7 +232,7 @@ public class MigrationService {
                         record.eTag());
                 summary.retried();
                 summary.add(objectProcessor.process(object, JobMode.RETRY, runId, properties.getPaths().getRetryFailedLog()));
-            }
+            });
             state.getCounters().add(summary.counters());
             state.setJobCompletedAt(Instant.now());
             state.setLastCheckpointAt(Instant.now());

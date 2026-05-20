@@ -1,6 +1,5 @@
 package com.dailytools.s3migration.inventory;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
 public final class S3InventoryKeyDecoder {
@@ -8,25 +7,41 @@ public final class S3InventoryKeyDecoder {
     private S3InventoryKeyDecoder() {}
 
     public static String decode(String encodedKey) {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream(encodedKey.length());
-        for (int index = 0; index < encodedKey.length(); index++) {
+        int firstPercent = encodedKey.indexOf('%');
+        if (firstPercent < 0) {
+            return encodedKey;
+        }
+
+        StringBuilder decoded = new StringBuilder(encodedKey.length());
+        decoded.append(encodedKey, 0, firstPercent);
+        byte[] bytes = new byte[encodedKey.length() - firstPercent];
+        int index = firstPercent;
+        while (index < encodedKey.length()) {
             char value = encodedKey.charAt(index);
             if (value == '%') {
-                if (index + 2 >= encodedKey.length()) {
-                    throw new IllegalArgumentException("Invalid percent encoding in S3 Inventory key");
+                int byteCount = 0;
+                while (index < encodedKey.length() && encodedKey.charAt(index) == '%') {
+                    bytes[byteCount++] = decodePercentByte(encodedKey, index);
+                    index += 3;
                 }
-                int high = Character.digit(encodedKey.charAt(index + 1), 16);
-                int low = Character.digit(encodedKey.charAt(index + 2), 16);
-                if (high < 0 || low < 0) {
-                    throw new IllegalArgumentException("Invalid percent encoding in S3 Inventory key");
-                }
-                bytes.write((high << 4) + low);
-                index += 2;
+                decoded.append(new String(bytes, 0, byteCount, StandardCharsets.UTF_8));
             } else {
-                byte[] utf8 = String.valueOf(value).getBytes(StandardCharsets.UTF_8);
-                bytes.writeBytes(utf8);
+                decoded.append(value);
+                index++;
             }
         }
-        return bytes.toString(StandardCharsets.UTF_8);
+        return decoded.toString();
+    }
+
+    private static byte decodePercentByte(String encodedKey, int percentIndex) {
+        if (percentIndex + 2 >= encodedKey.length()) {
+            throw new IllegalArgumentException("Invalid percent encoding in S3 Inventory key");
+        }
+        int high = Character.digit(encodedKey.charAt(percentIndex + 1), 16);
+        int low = Character.digit(encodedKey.charAt(percentIndex + 2), 16);
+        if (high < 0 || low < 0) {
+            throw new IllegalArgumentException("Invalid percent encoding in S3 Inventory key");
+        }
+        return (byte) ((high << 4) + low);
     }
 }

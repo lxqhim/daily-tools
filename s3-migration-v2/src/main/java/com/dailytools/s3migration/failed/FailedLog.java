@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -63,6 +64,11 @@ public class FailedLog {
 
     public List<FailedRecord> readAll(List<Path> paths) throws IOException {
         List<FailedRecord> records = new ArrayList<>();
+        readEach(paths, records::add);
+        return records;
+    }
+
+    public void readEach(List<Path> paths, Consumer<FailedRecord> handler) throws IOException {
         for (Path path : paths) {
             if (!Files.exists(path)) {
                 continue;
@@ -71,11 +77,10 @@ public class FailedLog {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (!line.isBlank()) {
-                        records.add(objectMapper.readValue(line, FailedRecord.class));
+                        handler.accept(objectMapper.readValue(line, FailedRecord.class));
                     }
                 }
             }
         }
-        return records;
     }
 }
