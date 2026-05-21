@@ -8,10 +8,14 @@ import com.dailytools.s3migration.inventory.InventoryObject;
 import com.dailytools.s3migration.upload.TargetUploader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ObjectProcessor {
+
+    private static final Logger log = LoggerFactory.getLogger(ObjectProcessor.class);
 
     private final S3ObjectDecryptor decryptor;
     private final TargetUploader uploader;
@@ -38,11 +42,15 @@ public class ObjectProcessor {
             if (localFile == null) {
                 throw new IllegalStateException("Decryptor returned null local file path");
             }
-            uploader.upload(properties.getS3().getTargetBucket(), object.key(), localFile);
+            if (properties.getUpload().isDryRun()) {
+                logUploadDryRun(object, localFile);
+            } else {
+                uploader.upload(properties.getS3().getTargetBucket(), object.key(), localFile);
+            }
         } catch (Exception exception) {
             operationFailure = exception;
         } finally {
-            if (localFile != null) {
+            if (localFile != null && !properties.getUpload().isDryRun()) {
                 try {
                     Files.deleteIfExists(localFile);
                 } catch (Exception exception) {
@@ -59,7 +67,17 @@ public class ObjectProcessor {
             appendFailure(failedLogPath, object, mode, runId, "LOCAL_CLEANUP_FAILED", cleanupFailure);
             return ObjectProcessResult.FAILED;
         }
-        return ObjectProcessResult.SUCCESS;
+        return properties.getUpload().isDryRun() ? ObjectProcessResult.DRY_RUN_SUCCESS : ObjectProcessResult.SUCCESS;
+    }
+
+    private void logUploadDryRun(InventoryObject object, Path localFile) throws Exception {
+        log.info(
+                "Upload dry-run enabled; decrypted object sourceBucket={} targetBucket={} key={} localFile={} sizeBytes={} uploadSkipped=true localFileRetained=true",
+                properties.getS3().getSourceBucket(),
+                properties.getS3().getTargetBucket(),
+                object.key(),
+                localFile,
+                Files.size(localFile));
     }
 
     private void appendFailure(

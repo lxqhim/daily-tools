@@ -302,6 +302,18 @@ For one object:
 9. The migration tool relies on target bucket default SSE.
 10. In a finally-style cleanup step, the migration tool deletes the returned local file path.
 
+If `migration.upload.dry-run=true`:
+
+- steps 1 through 5 still run.
+- the tool logs source bucket, target bucket, key, local file path, and local file size.
+- upload is skipped.
+- local cleanup is skipped so the decrypted file remains available for inspection.
+- only the first `migration.upload.dry-run-sample-size` eligible objects are submitted for decrypt.
+- after the sample limit is reached, the tool stops reading later inventory data files and does not decrypt more objects.
+- the object is counted as `dryRunSuccess`, not `success`, if decrypt produced a readable local file.
+- production state checkpointing is disabled; the tool does not mark data files complete or mark baseline complete.
+- dry-run is not resumable. The default sample size is `100`, so a full baseline dry-run cannot silently retain millions of local files.
+
 If decryptor throws before returning a path:
 
 - record an object-level failure.

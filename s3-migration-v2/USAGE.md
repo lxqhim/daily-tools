@@ -80,12 +80,38 @@ migration:
   worker:
     concurrency: 8
     queue-size: 64
+  upload:
+    dry-run: false
+    dry-run-sample-size: 100
+    multipart-threshold-bytes: 134217728
+    multipart-part-size-bytes: 67108864
   observability:
     progress-log-interval: 5m
     max-failed-log-bytes: 10737418240
 ```
 
 `initial-watermark` is optional. If omitted, baseline completion initializes the delta watermark from the maximum row-level `LastModifiedDate` observed by this shard.
+
+## Decrypt-only Dry Run
+
+Use upload dry-run when you want to validate decrypt output before writing to the target bucket:
+
+```bash
+--migration.upload.dry-run=true
+```
+
+When enabled:
+
+- the decryptor still downloads and decrypts the source object to a local file.
+- the tool logs source bucket, target bucket, key, local file path, and local file size.
+- upload to the target bucket is skipped.
+- the local decrypted file is retained for manual inspection.
+- at most `migration.upload.dry-run-sample-size` eligible objects are decrypted and retained per run.
+- after the sample limit is reached, later objects are not downloaded, decrypted, uploaded, or retained.
+- the object is counted as `dryRunSuccess`, not `success`, if decrypt produced a readable local file.
+- `state.json` is not written or checkpointed, so a later real baseline is not skipped.
+
+The default sample size is `100`. Increase it only when the server has enough temporary disk for the retained decrypted files. Dry-run is intentionally not resumable.
 
 ## Baseline
 

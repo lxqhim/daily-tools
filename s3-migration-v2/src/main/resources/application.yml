@@ -10,6 +10,8 @@ migration:
     concurrency: 8
     queue-size: 64
   upload:
+    dry-run: false
+    dry-run-sample-size: 100
     multipart-threshold-bytes: 134217728
     multipart-part-size-bytes: 67108864
   observability:

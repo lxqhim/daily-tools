@@ -208,6 +208,7 @@ public class MigrationState {
 
     public static class Counters {
         private long success;
+        private long dryRunSuccess;
         private long failed;
         private long skipped;
         private long retried;
@@ -218,6 +219,14 @@ public class MigrationState {
 
         public void setSuccess(long success) {
             this.success = success;
+        }
+
+        public long getDryRunSuccess() {
+            return dryRunSuccess;
+        }
+
+        public void setDryRunSuccess(long dryRunSuccess) {
+            this.dryRunSuccess = dryRunSuccess;
         }
 
         public long getFailed() {
@@ -246,6 +255,7 @@ public class MigrationState {
 
         public void add(ProcessingCounters counters) {
             success += counters.success();
+            dryRunSuccess += counters.dryRunSuccess();
             failed += counters.failed();
             skipped += counters.skipped();
             retried += counters.retried();
@@ -253,8 +263,8 @@ public class MigrationState {
 
         @Override
         public String toString() {
-            return "Counters[success=" + success + ", failed=" + failed + ", skipped=" + skipped + ", retried="
-                    + retried + "]";
+            return "Counters[success=" + success + ", dryRunSuccess=" + dryRunSuccess + ", failed=" + failed
+                    + ", skipped=" + skipped + ", retried=" + retried + "]";
         }
     }
 }

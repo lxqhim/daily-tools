@@ -83,6 +83,30 @@ class ObjectProcessorTest {
         assertThat(decrypted).doesNotExist();
     }
 
+    @Test
+    void dryRunSkipsUploadAndKeepsLocalFile() throws Exception {
+        Path decrypted = tempDir.resolve("decrypted.txt");
+        MigrationProperties properties = properties();
+        properties.getUpload().setDryRun(true);
+        RecordingUploader uploader = new RecordingUploader();
+        ObjectProcessor processor = new ObjectProcessor(
+                (bucket, prefix) -> {
+                    writeDecrypted(decrypted);
+                    return decrypted;
+                },
+                uploader,
+                new FailedLog(new ObjectMapper()),
+                properties);
+
+        ObjectProcessResult result =
+                processor.process(object(), JobMode.BASELINE, "run-1", tempDir.resolve("failed.log"));
+
+        assertThat(result).isEqualTo(ObjectProcessResult.DRY_RUN_SUCCESS);
+        assertThat(uploader.uploadedKey).isNull();
+        assertThat(decrypted).exists();
+        assertThat(Files.readString(decrypted)).isEqualTo("content");
+    }
+
     private static InventoryObject object() {
         return new InventoryObject("source", "folder/object.txt", Instant.parse("2026-05-20T00:00:00Z"), 1L, "etag");
     }

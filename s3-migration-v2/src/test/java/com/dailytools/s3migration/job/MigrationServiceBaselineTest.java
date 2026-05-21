@@ -98,6 +98,61 @@ class MigrationServiceBaselineTest {
         assertThat(completedState.getLastErrorCode()).isNull();
     }
 
+    @Test
+    void uploadDryRunBaselineDoesNotWriteMigrationStateOrUpload() throws Exception {
+        MigrationProperties properties = baselineProperties();
+        properties.getUpload().setDryRun(true);
+        ObjectMapper objectMapper = new ObjectMapper();
+        StateStore stateStore = new StateStore(objectMapper);
+        FailedLog failedLog = new FailedLog(objectMapper);
+        List<String> uploadedKeys = new CopyOnWriteArrayList<>();
+
+        MigrationService service = service(
+                properties,
+                stateStore,
+                failedLog,
+                new FailingS3ObjectReader(inventoryObjects(), Set.of()),
+                uploadedKeys);
+
+        service.run();
+
+        assertThat(properties.getPaths().getState()).doesNotExist();
+        assertThat(uploadedKeys).isEmpty();
+        try (var files = Files.list(tempDir)) {
+            assertThat(files.filter(path -> path.getFileName().toString().endsWith(".bin"))
+                            .count())
+                    .isEqualTo(2);
+        }
+    }
+
+    @Test
+    void uploadDryRunBaselineStopsAfterSampleSize() throws Exception {
+        MigrationProperties properties = baselineProperties();
+        properties.getUpload().setDryRun(true);
+        properties.getUpload().setDryRunSampleSize(1);
+        ObjectMapper objectMapper = new ObjectMapper();
+        StateStore stateStore = new StateStore(objectMapper);
+        FailedLog failedLog = new FailedLog(objectMapper);
+        List<String> uploadedKeys = new CopyOnWriteArrayList<>();
+
+        MigrationService service = service(
+                properties,
+                stateStore,
+                failedLog,
+                new FailingS3ObjectReader(inventoryObjects(), Set.of()),
+                uploadedKeys);
+
+        service.run();
+
+        assertThat(properties.getPaths().getState()).doesNotExist();
+        assertThat(uploadedKeys).isEmpty();
+        try (var files = Files.list(tempDir)) {
+            assertThat(files.filter(path -> path.getFileName().toString().endsWith(".bin"))
+                            .count())
+                    .isEqualTo(1);
+        }
+    }
+
     private MigrationService service(
             MigrationProperties properties,
             StateStore stateStore,

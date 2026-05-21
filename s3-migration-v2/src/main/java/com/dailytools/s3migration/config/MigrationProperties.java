@@ -329,10 +329,29 @@ public class MigrationProperties {
     }
 
     public static class Upload {
+        private boolean dryRun;
+        @Min(1)
+        private int dryRunSampleSize = 100;
         @Min(5_242_880)
         private long multipartThresholdBytes = 134_217_728L;
         @Min(5_242_880)
         private int multipartPartSizeBytes = 67_108_864;
+
+        public boolean isDryRun() {
+            return dryRun;
+        }
+
+        public void setDryRun(boolean dryRun) {
+            this.dryRun = dryRun;
+        }
+
+        public int getDryRunSampleSize() {
+            return dryRunSampleSize;
+        }
+
+        public void setDryRunSampleSize(int dryRunSampleSize) {
+            this.dryRunSampleSize = dryRunSampleSize;
+        }
 
         public long getMultipartThresholdBytes() {
             return multipartThresholdBytes;

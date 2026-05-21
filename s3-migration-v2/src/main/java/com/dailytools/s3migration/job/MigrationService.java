@@ -17,6 +17,7 @@ import com.dailytools.s3migration.state.MigrationState;
 import com.dailytools.s3migration.state.StateStore;
 import java.io.InputStream;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -66,11 +67,152 @@ public class MigrationService {
     }
 
     public void run() throws Exception {
+        if (properties.getUpload().isDryRun()) {
+            runUploadDryRun();
+            return;
+        }
         switch (properties.getJob().getMode()) {
             case BASELINE -> runBaseline();
             case DELTA -> runDelta();
             case RETRY -> runRetry();
         }
+    }
+
+    private void runUploadDryRun() throws Exception {
+        switch (properties.getJob().getMode()) {
+            case BASELINE -> runBaselineUploadDryRun();
+            case DELTA -> runDeltaUploadDryRun();
+            case RETRY -> runRetryUploadDryRun();
+        }
+    }
+
+    private void runBaselineUploadDryRun() throws Exception {
+        String runId = runId();
+        S3Uri manifestUri = S3Uri.parse(properties.getInventory().getManifestUri());
+        DryRunSampleLimiter sampleLimiter = dryRunSampleLimiter();
+        log.info(
+                "Starting baseline upload dry-run runId={} dryRun=true shard={}/{} manifest={} dryRunSampleSize={} stateCheckpointing=false",
+                runId,
+                properties.getShard().getIndex(),
+                properties.getShard().getTotal(),
+                manifestUri.toUriString(),
+                sampleLimiter.limit());
+
+        ProcessingSummary total = new ProcessingSummary();
+        InventoryManifest manifest = manifestReader.read(manifestUri);
+        processManifestFiles(
+                dryRunState(),
+                manifestUri.bucket(),
+                manifest,
+                JobMode.BASELINE,
+                runId,
+                new LinkedHashSet<>(),
+                null,
+                total,
+                false,
+                sampleLimiter);
+        log.info(
+                "Completed baseline upload dry-run runId={} dryRun=true shard={}/{} summary={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                runId,
+                properties.getShard().getIndex(),
+                properties.getShard().getTotal(),
+                total.counters(),
+                sampleLimiter.submitted(),
+                sampleLimiter.limit(),
+                sampleLimiter.reached());
+    }
+
+    private void runDeltaUploadDryRun() throws Exception {
+        MigrationState existingState = stateStore.load(properties.getPaths().getState(), properties);
+        if (!existingState.getBaselineStatus().allowsDelta()) {
+            throw new IllegalStateException("Delta requires baseline status COMPLETED or COMPLETED_WITH_FAILURES");
+        }
+
+        String runId = runId();
+        S3Uri manifestUri = S3Uri.parse(properties.getInventory().getManifestUri());
+        DryRunSampleLimiter sampleLimiter = dryRunSampleLimiter();
+        Instant previousWatermark = existingState.getDeltaWatermark();
+        if (previousWatermark == null) {
+            previousWatermark = watermarkPolicy.initialForDeltaWhenStateMissing();
+        }
+        log.info(
+                "Starting delta upload dry-run runId={} dryRun=true shard={}/{} manifest={} previousWatermark={} dryRunSampleSize={} stateCheckpointing=false",
+                runId,
+                properties.getShard().getIndex(),
+                properties.getShard().getTotal(),
+                manifestUri.toUriString(),
+                previousWatermark,
+                sampleLimiter.limit());
+
+        ProcessingSummary total = new ProcessingSummary();
+        InventoryManifest manifest = manifestReader.read(manifestUri);
+        processManifestFiles(
+                dryRunState(),
+                manifestUri.bucket(),
+                manifest,
+                JobMode.DELTA,
+                runId,
+                new LinkedHashSet<>(),
+                previousWatermark,
+                total,
+                false,
+                sampleLimiter);
+        log.info(
+                "Completed delta upload dry-run runId={} dryRun=true shard={}/{} summary={} candidateWatermark={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                runId,
+                properties.getShard().getIndex(),
+                properties.getShard().getTotal(),
+                total.counters(),
+                watermarkPolicy.advanceAfterDelta(previousWatermark, total),
+                sampleLimiter.submitted(),
+                sampleLimiter.limit(),
+                sampleLimiter.reached());
+    }
+
+    private void runRetryUploadDryRun() throws Exception {
+        String runId = runId();
+        DryRunSampleLimiter sampleLimiter = dryRunSampleLimiter();
+        log.info(
+                "Starting retry upload dry-run runId={} dryRun=true shard={}/{} inputs={} dryRunSampleSize={} stateCheckpointing=false",
+                runId,
+                properties.getShard().getIndex(),
+                properties.getShard().getTotal(),
+                properties.getPaths().getRetryInputs(),
+                sampleLimiter.limit());
+        ProcessingSummary summary = new ProcessingSummary();
+        try {
+            failedLog.readEach(properties.getPaths().getRetryInputs(), record -> {
+                if (!sampleLimiter.tryReserve()) {
+                    summary.skipped();
+                    throw DryRunSampleLimitReached.INSTANCE;
+                }
+                InventoryObject object = new InventoryObject(
+                        properties.getS3().getSourceBucket(),
+                        record.key(),
+                        record.lastModified(),
+                        record.size(),
+                        record.eTag());
+                summary.retried();
+                summary.add(
+                        objectProcessor.process(object, JobMode.RETRY, runId, properties.getPaths().getRetryFailedLog()));
+            });
+        } catch (DryRunSampleLimitReached exception) {
+            log.info(
+                    "Upload dry-run sample size reached mode={} runId={} sampledObjects={} dryRunSampleSize={} uploadDryRun=true",
+                    JobMode.RETRY,
+                    runId,
+                    sampleLimiter.submitted(),
+                    sampleLimiter.limit());
+        }
+        log.info(
+                "Completed retry upload dry-run runId={} dryRun=true shard={}/{} summary={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                runId,
+                properties.getShard().getIndex(),
+                properties.getShard().getTotal(),
+                summary.counters(),
+                sampleLimiter.submitted(),
+                sampleLimiter.limit(),
+                sampleLimiter.reached());
     }
 
     private void runBaseline() throws Exception {
@@ -82,7 +224,7 @@ public class MigrationService {
         String runId = runId();
         S3Uri manifestUri = S3Uri.parse(properties.getInventory().getManifestUri());
         log.info(
-                "Starting baseline runId={} shard={}/{} manifest={}",
+                "Starting baseline runId={} dryRun=false shard={}/{} manifest={}",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
@@ -121,7 +263,7 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed baseline runId={} status={} shard={}/{} counters={}",
+                    "Completed baseline runId={} dryRun=false status={} shard={}/{} counters={}",
                     runId,
                     state.getBaselineStatus(),
                     properties.getShard().getIndex(),
@@ -146,7 +288,7 @@ public class MigrationService {
         String runId = runId();
         S3Uri manifestUri = S3Uri.parse(properties.getInventory().getManifestUri());
         log.info(
-                "Starting delta runId={} shard={}/{} manifest={}",
+                "Starting delta runId={} dryRun=false shard={}/{} manifest={}",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
@@ -191,7 +333,7 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed delta runId={} shard={}/{} previousWatermark={} newWatermark={} counters={}",
+                    "Completed delta runId={} dryRun=false shard={}/{} previousWatermark={} newWatermark={} counters={}",
                     runId,
                     properties.getShard().getIndex(),
                     properties.getShard().getTotal(),
@@ -211,7 +353,7 @@ public class MigrationService {
         MigrationState state = stateStore.loadOrCreate(properties.getPaths().getState(), properties);
         String runId = runId();
         log.info(
-                "Starting retry runId={} shard={}/{} inputs={}",
+                "Starting retry runId={} dryRun=false shard={}/{} inputs={}",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
@@ -238,7 +380,7 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed retry runId={} shard={}/{} summary={} counters={}",
+                    "Completed retry runId={} dryRun=false shard={}/{} summary={} counters={}",
                     runId,
                     properties.getShard().getIndex(),
                     properties.getShard().getTotal(),
@@ -263,42 +405,97 @@ public class MigrationService {
             Instant watermark,
             ProcessingSummary total)
             throws Exception {
+        processManifestFiles(state, inventoryBucket, manifest, mode, runId, completedFiles, watermark, total, true, null);
+    }
+
+    private void processManifestFiles(
+            MigrationState state,
+            String inventoryBucket,
+            InventoryManifest manifest,
+            JobMode mode,
+            String runId,
+            Set<String> completedFiles,
+            Instant watermark,
+            ProcessingSummary total,
+            boolean writeCheckpoints)
+            throws Exception {
+        processManifestFiles(
+                state, inventoryBucket, manifest, mode, runId, completedFiles, watermark, total, writeCheckpoints, null);
+    }
+
+    private void processManifestFiles(
+            MigrationState state,
+            String inventoryBucket,
+            InventoryManifest manifest,
+            JobMode mode,
+            String runId,
+            Set<String> completedFiles,
+            Instant watermark,
+            ProcessingSummary total,
+            boolean writeCheckpoints,
+            DryRunSampleLimiter dryRunSampleLimiter)
+            throws Exception {
         ThreadPoolExecutor executor = newWorkerExecutor();
         try {
             for (InventoryDataFile file : manifest.files()) {
                 if (completedFiles.contains(file.key())) {
                     continue;
                 }
-                ProcessingSummary fileSummary =
-                        processDataFile(inventoryBucket, manifest.fileSchema(), file, mode, runId, watermark, executor);
+                if (dryRunSampleLimiter != null && dryRunSampleLimiter.reached()) {
+                    log.info(
+                            "Upload dry-run sample size reached before next inventory data file mode={} runId={} nextKey={} sampledObjects={} dryRunSampleSize={} uploadDryRun=true",
+                            mode,
+                            runId,
+                            file.key(),
+                            dryRunSampleLimiter.submitted(),
+                            dryRunSampleLimiter.limit());
+                    break;
+                }
+                DataFileProcessingResult fileResult = processDataFile(
+                        inventoryBucket, manifest.fileSchema(), file, mode, runId, watermark, executor, dryRunSampleLimiter);
+                ProcessingSummary fileSummary = fileResult.summary();
                 total.add(fileSummary);
-                completedFiles.add(file.key());
-                state.getCounters().add(fileSummary.counters());
-                checkpointObservedWatermark(state, mode, watermark, total);
-                state.setLastCheckpointAt(Instant.now());
-                stateStore.write(properties.getPaths().getState(), state);
+                if (writeCheckpoints) {
+                    completedFiles.add(file.key());
+                    state.getCounters().add(fileSummary.counters());
+                    checkpointObservedWatermark(state, mode, watermark, total);
+                    state.setLastCheckpointAt(Instant.now());
+                    stateStore.write(properties.getPaths().getState(), state);
+                }
                 log.info(
-                        "Processed inventory data file mode={} runId={} key={} summary={} observedMaxLastModified={} candidateWatermark={}",
+                        "Processed inventory data file mode={} runId={} key={} summary={} observedMaxLastModified={} candidateWatermark={} stateCheckpointed={}",
                         mode,
                         runId,
                         file.key(),
                         fileSummary.counters(),
                         total.maxLastModified(),
-                        state.getDeltaCandidateWatermark());
+                        state.getDeltaCandidateWatermark(),
+                        writeCheckpoints);
+                if (fileResult.sampleLimitReached()) {
+                    log.info(
+                            "Upload dry-run sample size reached inside inventory data file mode={} runId={} key={} sampledObjects={} dryRunSampleSize={} uploadDryRun=true",
+                            mode,
+                            runId,
+                            file.key(),
+                            dryRunSampleLimiter.submitted(),
+                            dryRunSampleLimiter.limit());
+                    break;
+                }
             }
         } finally {
             executor.shutdownNow();
         }
     }
 
-    private ProcessingSummary processDataFile(
+    private DataFileProcessingResult processDataFile(
             String inventoryBucket,
             String fileSchema,
             InventoryDataFile file,
             JobMode mode,
             String runId,
             Instant watermark,
-            ThreadPoolExecutor executor)
+            ThreadPoolExecutor executor,
+            DryRunSampleLimiter dryRunSampleLimiter)
             throws Exception {
         ProcessingSummary summary = new ProcessingSummary();
         ExecutorCompletionService<ObjectProcessResult> completionService = new ExecutorCompletionService<>(executor);
@@ -306,53 +503,63 @@ public class MigrationService {
         long maxInFlight = (long) properties.getWorker().getConcurrency() + properties.getWorker().getQueueSize();
         DataFileProgress progress =
                 new DataFileProgress(Instant.now(), properties.getObservability().getProgressLogInterval());
+        boolean sampleLimitReached = false;
 
         try (InputStream inputStream = objectReader.open(new S3Uri(inventoryBucket, file.key()))) {
-            csvParser.parseGzip(
-                    inputStream,
-                    fileSchema,
-                    object -> {
-                        progress.scanned();
-                        if (!properties.getS3().getSourceBucket().equals(object.bucket())) {
-                            summary.skipped();
+            try {
+                csvParser.parseGzip(
+                        inputStream,
+                        fileSchema,
+                        object -> {
+                            progress.scanned();
+                            if (!properties.getS3().getSourceBucket().equals(object.bucket())) {
+                                summary.skipped();
+                                logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
+                                return;
+                            }
+                            if (mode == JobMode.DELTA && object.lastModified().isBefore(watermark)) {
+                                summary.skipped();
+                                logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
+                                return;
+                            }
+                            if (!shardAssigner.owns(
+                                    object.key(), properties.getShard().getTotal(), properties.getShard().getIndex())) {
+                                summary.skipped();
+                                logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
+                                return;
+                            }
+                            if (dryRunSampleLimiter != null && !dryRunSampleLimiter.tryReserve()) {
+                                summary.skipped();
+                                logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
+                                throw DryRunSampleLimitReached.INSTANCE;
+                            }
+                            summary.observeLastModified(object.lastModified());
+                            submit(
+                                    completionService,
+                                    () -> objectProcessor.process(
+                                            object, mode, runId, properties.getPaths().getFailedLog()));
+                            inFlight[0]++;
+                            progress.submitted();
+                            if (inFlight[0] >= maxInFlight) {
+                                waitForOneCompletion(completionService, mode, runId, file, progress, summary, inFlight[0]);
+                                inFlight[0]--;
+                            }
                             logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
-                            return;
-                        }
-                        if (mode == JobMode.DELTA && object.lastModified().isBefore(watermark)) {
-                            summary.skipped();
+                        },
+                        failure -> {
+                            progress.scanned();
+                            handleRowParseFailure(file, mode, runId, summary, failure);
                             logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
-                            return;
-                        }
-                        if (!shardAssigner.owns(
-                                object.key(), properties.getShard().getTotal(), properties.getShard().getIndex())) {
-                            summary.skipped();
-                            logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
-                            return;
-                        }
-                        summary.observeLastModified(object.lastModified());
-                        submit(
-                                completionService,
-                                () -> objectProcessor.process(
-                                        object, mode, runId, properties.getPaths().getFailedLog()));
-                        inFlight[0]++;
-                        progress.submitted();
-                        if (inFlight[0] >= maxInFlight) {
-                            waitForOneCompletion(completionService, mode, runId, file, progress, summary, inFlight[0]);
-                            inFlight[0]--;
-                        }
-                        logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
-                    },
-                    failure -> {
-                        progress.scanned();
-                        handleRowParseFailure(file, mode, runId, summary, failure);
-                        logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
-                    });
+                        });
+            } catch (DryRunSampleLimitReached exception) {
+                sampleLimitReached = true;
+            }
             while (inFlight[0] > 0) {
                 waitForOneCompletion(completionService, mode, runId, file, progress, summary, inFlight[0]);
                 inFlight[0]--;
                 logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
             }
-            return summary;
+            return new DataFileProcessingResult(summary, sampleLimitReached);
         }
     }
 
@@ -499,5 +706,59 @@ public class MigrationService {
     private String runId() {
         String configuredRunId = properties.getJob().getRunId();
         return configuredRunId == null || configuredRunId.isBlank() ? UUID.randomUUID().toString() : configuredRunId;
+    }
+
+    private MigrationState dryRunState() {
+        MigrationState state = new MigrationState();
+        state.setShardTotal(properties.getShard().getTotal());
+        state.setShardIndex(properties.getShard().getIndex());
+        state.setSourceBucket(properties.getS3().getSourceBucket());
+        state.setTargetBucket(properties.getS3().getTargetBucket());
+        return state;
+    }
+
+    private DryRunSampleLimiter dryRunSampleLimiter() {
+        return new DryRunSampleLimiter(properties.getUpload().getDryRunSampleSize());
+    }
+
+    private record DataFileProcessingResult(ProcessingSummary summary, boolean sampleLimitReached) {}
+
+    private static final class DryRunSampleLimiter {
+
+        private final int limit;
+        private int submitted;
+
+        private DryRunSampleLimiter(int limit) {
+            this.limit = limit;
+        }
+
+        private boolean tryReserve() {
+            if (reached()) {
+                return false;
+            }
+            submitted++;
+            return true;
+        }
+
+        private boolean reached() {
+            return submitted >= limit;
+        }
+
+        private int submitted() {
+            return submitted;
+        }
+
+        private int limit() {
+            return limit;
+        }
+    }
+
+    private static final class DryRunSampleLimitReached extends RuntimeException {
+
+        private static final DryRunSampleLimitReached INSTANCE = new DryRunSampleLimitReached();
+
+        private DryRunSampleLimitReached() {
+            super(null, null, false, false);
+        }
     }
 }

@@ -140,6 +140,17 @@ After decrypting one object:
 - Delete the local decrypted file after the upload attempt finishes.
 - If upload fails, write the object to `failed.log` and still attempt to delete the local decrypted file.
 
+Upload dry-run:
+
+- Controlled by `migration.upload.dry-run`. Default: `false`.
+- Dry-run still decrypts selected objects to local files, but never uploads them to the target bucket.
+- Dry-run retains decrypted local files for manual inspection.
+- Dry-run must be sample-bounded by `migration.upload.dry-run-sample-size`. Default: `100`.
+- After the sample limit is reached, the tool must not download, decrypt, upload, or retain more objects.
+- Dry-run object successes must be reported as `dryRunSuccess`, not `success`.
+- Dry-run must not write production state or mark baseline inventory files complete.
+- A later real baseline run must not be skipped because a prior dry-run was executed.
+
 ## State File
 
 Each server keeps local state in `state.json`.

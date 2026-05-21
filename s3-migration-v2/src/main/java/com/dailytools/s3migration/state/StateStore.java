@@ -25,9 +25,7 @@ public class StateStore {
 
     public MigrationState loadOrCreate(Path path, MigrationProperties properties) throws IOException {
         if (Files.exists(path)) {
-            MigrationState state = objectMapper.readValue(path.toFile(), MigrationState.class);
-            validateState(state, properties);
-            return state;
+            return load(path, properties);
         }
         MigrationState state = new MigrationState();
         state.setShardTotal(properties.getShard().getTotal());
@@ -37,6 +35,15 @@ public class StateStore {
         state.setBaselineStatus(BaselineStatus.NOT_STARTED);
         state.setJobStartedAt(Instant.now());
         write(path, state);
+        return state;
+    }
+
+    public MigrationState load(Path path, MigrationProperties properties) throws IOException {
+        if (!Files.exists(path)) {
+            throw new IOException("State file does not exist: " + path);
+        }
+        MigrationState state = objectMapper.readValue(path.toFile(), MigrationState.class);
+        validateState(state, properties);
         return state;
     }
 

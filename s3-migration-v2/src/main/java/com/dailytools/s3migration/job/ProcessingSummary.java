@@ -6,6 +6,7 @@ import java.time.Instant;
 public class ProcessingSummary {
 
     private long success;
+    private long dryRunSuccess;
     private long failed;
     private long skipped;
     private long retried;
@@ -14,13 +15,16 @@ public class ProcessingSummary {
     public void add(ObjectProcessResult result) {
         if (result == ObjectProcessResult.SUCCESS) {
             success++;
-        } else {
+        } else if (result == ObjectProcessResult.DRY_RUN_SUCCESS) {
+            dryRunSuccess++;
+        } else if (result == ObjectProcessResult.FAILED) {
             failed++;
         }
     }
 
     public void add(ProcessingSummary other) {
         success += other.success;
+        dryRunSuccess += other.dryRunSuccess;
         failed += other.failed;
         skipped += other.skipped;
         retried += other.retried;
@@ -53,7 +57,7 @@ public class ProcessingSummary {
     }
 
     public ProcessingCounters counters() {
-        return new ProcessingCounters(success, failed, skipped, retried);
+        return new ProcessingCounters(success, dryRunSuccess, failed, skipped, retried);
     }
 
     @Override
