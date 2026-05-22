@@ -4,3 +4,5 @@
 /base64/web/node_modules/**
 /base64/web/tsconfig.tsbuildinfo
 /thin-db-client/bin/**
+.vscode/**
+s3-migration-v2/feedback1.md
