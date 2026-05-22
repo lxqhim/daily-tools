@@ -55,10 +55,16 @@ public class LegacyKmsS3ObjectDecryptor implements S3ObjectDecryptor {
         CryptoConfigurationV2 configuration = new CryptoConfigurationV2()
                 .withCryptoMode(cryptoMode(legacyKms.getCryptoMode()))
                 .withStorageMode(storageMode(legacyKms.getStorageMode()));
-        if (legacyKms.getKmsRegion() != null && !legacyKms.getKmsRegion().isBlank()) {
-            configuration.withAwsKmsRegion(Region.getRegion(Regions.fromName(legacyKms.getKmsRegion())));
-        }
+        configuration.withAwsKmsRegion(Region.getRegion(Regions.fromName(kmsRegion(properties))));
         return configuration;
+    }
+
+    private static String kmsRegion(MigrationProperties properties) {
+        String configuredKmsRegion = properties.getDecrypt().getLegacyKms().getKmsRegion();
+        if (configuredKmsRegion != null && !configuredKmsRegion.isBlank()) {
+            return configuredKmsRegion;
+        }
+        return properties.getS3().getRegion();
     }
 
     private static CryptoMode cryptoMode(MigrationProperties.LegacyKmsCryptoMode mode) {

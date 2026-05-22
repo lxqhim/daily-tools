@@ -51,6 +51,10 @@ Options:
 
 If `legacy-kms.enabled=false` or omitted, no bundled decryptor is registered. Startup fails unless you provide your own Spring `S3ObjectDecryptor` bean on the classpath, so a bad decryptor configuration is caught before scanning inventory.
 
+If startup reports `No S3ObjectDecryptor configured`, either enable the built-in legacy KMS decryptor with `migration.decrypt.legacy-kms.enabled=true` and `migration.decrypt.legacy-kms.kms-key-id`, or package your own implementation of `S3ObjectDecryptor` as a Spring bean.
+
+The legacy KMS decryptor depends on Bouncy Castle because AWS SDK v1 requires the `BC` provider for authenticated encryption. The runnable jar includes `org.bouncycastle:bcprov-jdk18on`.
+
 ## Common Config
 
 You can configure with `application.yml`, environment variables, or command-line overrides.

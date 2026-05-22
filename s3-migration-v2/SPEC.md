@@ -122,6 +122,7 @@ Behavior:
 - Writes the decrypted object to a temp file under `migration.paths.temp-dir` and returns the path.
 - On any failure, deletes the partial temp file (best effort) and throws `DecryptException`.
 - The temp directory is created once at startup, not per object.
+- Includes Bouncy Castle provider support because AWS SDK v1 requires the `BC` provider for authenticated encryption.
 - Relies on the SDK v1 client's default retry policy for transient S3/KMS errors. Object-level failures surface to `failed.log`.
 
 Scope limitations:

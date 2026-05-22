@@ -10,9 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
-@Component
 public class ObjectProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ObjectProcessor.class);

@@ -21,6 +21,7 @@
         <java.version>21</java.version>
         <aws.sdk.version>2.25.60</aws.sdk.version>
         <aws.sdk.v1.version>1.12.797</aws.sdk.v1.version>
+        <bouncycastle.version>1.83</bouncycastle.version>
         <commons-csv.version>1.11.0</commons-csv.version>
     </properties>
 
@@ -63,6 +64,11 @@
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-kms</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>${bouncycastle.version}</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
