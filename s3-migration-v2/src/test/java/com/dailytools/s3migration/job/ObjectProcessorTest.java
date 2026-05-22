@@ -47,7 +47,7 @@ class ObjectProcessorTest {
         MigrationProperties properties = properties();
         ObjectProcessor processor = new ObjectProcessor(
                 (bucket, prefix) -> {
-                    throw new DecryptException("boom");
+                    throw new DecryptException("decrypt wrapper", new IllegalStateException("kms denied"));
                 },
                 new RecordingUploader(),
                 new FailedLog(new ObjectMapper()),
@@ -57,7 +57,10 @@ class ObjectProcessorTest {
         ObjectProcessResult result = processor.process(object(), JobMode.BASELINE, "run-1", failedLog);
 
         assertThat(result).isEqualTo(ObjectProcessResult.FAILED);
-        assertThat(Files.readString(failedLog)).contains("OBJECT_PROCESSING_FAILED").contains("boom");
+        assertThat(Files.readString(failedLog))
+                .contains("OBJECT_PROCESSING_FAILED")
+                .contains("DecryptException: decrypt wrapper")
+                .contains("IllegalStateException: kms denied");
     }
 
     @Test

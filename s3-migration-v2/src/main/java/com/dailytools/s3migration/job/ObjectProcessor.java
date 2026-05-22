@@ -91,7 +91,24 @@ public class ObjectProcessor {
                         properties.getS3().getTargetBucket(),
                         object,
                         code,
-                        exception.getMessage()),
+                        exceptionSummary(exception)),
                 properties.getObservability().getMaxFailedLogBytes());
+    }
+
+    private static String exceptionSummary(Throwable throwable) {
+        StringBuilder summary = new StringBuilder();
+        Throwable current = throwable;
+        while (current != null) {
+            if (!summary.isEmpty()) {
+                summary.append(" | caused by: ");
+            }
+            summary.append(current.getClass().getSimpleName());
+            String message = current.getMessage();
+            if (message != null && !message.isBlank()) {
+                summary.append(": ").append(message);
+            }
+            current = current.getCause();
+        }
+        return summary.toString();
     }
 }
