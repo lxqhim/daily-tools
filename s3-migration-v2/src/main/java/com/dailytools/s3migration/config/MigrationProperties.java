@@ -411,7 +411,7 @@ public class MigrationProperties {
         private String kmsKeyId;
         private String kmsRegion;
         @NotNull
-        private LegacyKmsCryptoMode cryptoMode = LegacyKmsCryptoMode.AUTHENTICATED_ENCRYPTION;
+        private LegacyKmsCryptoMode cryptoMode = LegacyKmsCryptoMode.ENCRYPTION_ONLY;
         @NotNull
         private LegacyKmsStorageMode storageMode = LegacyKmsStorageMode.OBJECT_METADATA;
 
@@ -457,6 +457,7 @@ public class MigrationProperties {
     }
 
     public enum LegacyKmsCryptoMode {
+        ENCRYPTION_ONLY,
         AUTHENTICATED_ENCRYPTION,
         STRICT_AUTHENTICATED_ENCRYPTION
     }

@@ -20,5 +20,5 @@ migration:
   decrypt:
     legacy-kms:
       enabled: false
-      crypto-mode: authenticated-encryption
+      crypto-mode: encryption-only
       storage-mode: object-metadata

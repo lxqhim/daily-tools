@@ -38,22 +38,23 @@ migration:
     legacy-kms:
       enabled: true
       kms-key-id: arn:aws:kms:us-east-1:111122223333:key/your-key-id
-      crypto-mode: authenticated-encryption
+      crypto-mode: encryption-only
       storage-mode: object-metadata
 ```
 
 Options:
 
 - `kms-key-id`: KMS key id or ARN used by the old encryption client.
-- `crypto-mode`: `authenticated-encryption` by default. This is the compatibility mode for reading objects written by the old v1 encryption client.
+- `crypto-mode`: `encryption-only` by default. Use this for objects written by older `AmazonS3Encryption` clients configured with `CryptoMode.EncryptionOnly`. Use `authenticated-encryption` or `strict-authenticated-encryption` only for objects written with those modes.
 - `storage-mode`: `object-metadata` by default. Use `instruction-file` only if the old project stored crypto metadata in separate instruction files.
 - `kms-region`: optional. Set this only if the KMS key region differs from `migration.s3.region`.
+- Credentials use the AWS SDK v1 default provider chain. On EC2, the job can use the instance profile role; make sure that role has `s3:GetObject` on the source objects and `kms:Decrypt` on the KMS key.
 
 If `legacy-kms.enabled=false` or omitted, no bundled decryptor is registered. Startup fails unless you provide your own Spring `S3ObjectDecryptor` bean on the classpath, so a bad decryptor configuration is caught before scanning inventory.
 
 If startup reports `No S3ObjectDecryptor configured`, either enable the built-in legacy KMS decryptor with `migration.decrypt.legacy-kms.enabled=true` and `migration.decrypt.legacy-kms.kms-key-id`, or package your own implementation of `S3ObjectDecryptor` as a Spring bean.
 
-The legacy KMS decryptor depends on Bouncy Castle because AWS SDK v1 requires the `BC` provider for authenticated encryption. The runnable jar includes `org.bouncycastle:bcprov-jdk18on`.
+The legacy KMS decryptor depends on Bouncy Castle because AWS SDK v1 may require the `BC` provider for legacy encryption modes. The runnable jar includes `org.bouncycastle:bcprov-jdk18on`.
 
 ## Common Config
 

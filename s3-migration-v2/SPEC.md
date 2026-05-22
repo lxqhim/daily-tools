@@ -102,7 +102,7 @@ Contract:
 
 ## Built-in Decryptor: Legacy KMS
 
-The project ships a default decryptor backed by the AWS Java SDK v1 `AmazonS3EncryptionV2` client with a KMS encryption materials provider. It is intended for source buckets whose objects were written by the AWS S3 Encryption Client V2 against a KMS key.
+The project ships a default decryptor backed by the AWS Java SDK v1 `AmazonS3Encryption` client with a KMS encryption materials provider. It is intended for source buckets whose objects were written by the legacy AWS S3 Encryption Client against a KMS key.
 
 Selection:
 
@@ -114,7 +114,7 @@ Configuration:
 
 - `migration.decrypt.legacy-kms.kms-key-id`: required when enabled. KMS key ARN or alias the source objects were encrypted under.
 - `migration.decrypt.legacy-kms.kms-region`: optional. Defaults to the S3 region when omitted.
-- `migration.decrypt.legacy-kms.crypto-mode`: `AUTHENTICATED_ENCRYPTION` (default) or `STRICT_AUTHENTICATED_ENCRYPTION`.
+- `migration.decrypt.legacy-kms.crypto-mode`: `ENCRYPTION_ONLY` (default), `AUTHENTICATED_ENCRYPTION`, or `STRICT_AUTHENTICATED_ENCRYPTION`.
 - `migration.decrypt.legacy-kms.storage-mode`: `OBJECT_METADATA` (default) or `INSTRUCTION_FILE`.
 
 Behavior:
@@ -122,13 +122,14 @@ Behavior:
 - Writes the decrypted object to a temp file under `migration.paths.temp-dir` and returns the path.
 - On any failure, deletes the partial temp file (best effort) and throws `DecryptException`.
 - The temp directory is created once at startup, not per object.
-- Includes Bouncy Castle provider support because AWS SDK v1 requires the `BC` provider for authenticated encryption.
+- Uses the AWS SDK v1 default credentials provider chain. On EC2, the decryptor can use the instance profile credentials without a static access key.
+- Includes Bouncy Castle provider support because AWS SDK v1 may require the `BC` provider for legacy encryption modes.
 - Relies on the SDK v1 client's default retry policy for transient S3/KMS errors. Object-level failures surface to `failed.log`.
 
 Scope limitations:
 
-- Only decrypts objects encrypted by the V2 encryption client. Objects written by the legacy V1 `EncryptionOnly` crypto mode cannot be read by `AmazonS3EncryptionV2` and will be recorded as object-level failures.
-- For source buckets with mixed-mode historical data, callers must provide their own decryptor.
+- Supports the legacy `EncryptionOnly` crypto mode used by older `AmazonS3Encryption` clients.
+- For source buckets with mixed crypto modes, run separate jobs with the matching `crypto-mode` or provide a custom decryptor that can auto-detect per object.
 
 ## Upload Behavior
 
