@@ -175,10 +175,12 @@ For each data file:
 8. At end of file, wait for all tasks submitted from that file to finish.
 9. Update success, failure, and skipped counts.
 10. Update observed maximum `LastModifiedDate` and candidate watermark for the current mode.
-11. Mark that data file complete in `state.json`.
+11. Advance the completed-file cursor in `state.json` by recording the completed count and last completed data file key.
 12. Atomically write `state.json`.
 
 Checkpointing happens at data file boundaries. If the process crashes halfway through a CSV file, the next run reprocesses that whole CSV file. This is intentional because duplicate target uploads are acceptable and file-boundary checkpointing avoids losing queued work.
+
+The checkpoint does not store the full set of completed data file keys. It stores a compact ordered cursor: completed file count plus the last completed key. On resume, the job skips that many manifest files and validates that the last skipped key matches the cursor. This keeps checkpoint I/O linear even for very large manifests.
 
 If one CSV row is malformed but the row can be isolated, the reader records an `INVENTORY_ROW_PARSE_FAILED` entry in `failed.log`, counts it as a failed row for the owning shard, and continues parsing later rows. Schema-level failures or unreadable gzip/data files remain run-level failures.
 
@@ -297,10 +299,13 @@ For one object:
 4. The decryptor writes the decrypted content to a local file.
 5. The decryptor returns the local file path.
 6. The migration tool uploads that local file to the target bucket using the same object key.
-7. The target upload is treated as a new file.
-8. The migration tool does not copy source metadata, tags, ACLs, or content type.
-9. The migration tool relies on target bucket default SSE.
-10. In a finally-style cleanup step, the migration tool deletes the returned local file path.
+7. The upload path is selected by configuration:
+   - default: plain S3 upload; target bucket default SSE applies.
+   - `migration.upload.client-side-kms.enabled=true`: AWS SDK v1 `AmazonS3Encryption` upload using the configured target KMS key ARN.
+8. The target upload is treated as a new file.
+9. The migration tool does not copy source metadata, tags, ACLs, or content type.
+10. The migration tool never sets explicit SSE headers; target bucket default SSE remains unchanged.
+11. In a finally-style cleanup step, the migration tool deletes the returned local file path.
 
 If `migration.upload.dry-run=true`:
 

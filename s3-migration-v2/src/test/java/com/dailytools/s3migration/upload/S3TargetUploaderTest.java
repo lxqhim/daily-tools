@@ -2,6 +2,7 @@ package com.dailytools.s3migration.upload;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -95,6 +96,36 @@ class S3TargetUploaderTest {
         assertThat(abortCaptor.getValue().bucket()).isEqualTo("target-bucket");
         assertThat(abortCaptor.getValue().key()).isEqualTo("abort-me.bin");
         assertThat(abortCaptor.getValue().uploadId()).isEqualTo("upload-3");
+    }
+
+    @Test
+    void wrapsLocalReadFailureWithTargetContext() {
+        S3Client s3Client = mock(S3Client.class);
+        S3TargetUploader uploader = new S3TargetUploader(s3Client, uploadProperties(5, 3));
+
+        assertThatThrownBy(() -> uploader.upload("target-bucket", "missing.bin", tempDir.resolve("missing.bin")))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Failed to upload target object target-bucket/missing.bin");
+    }
+
+    @Test
+    void preservesOriginalMultipartFailureWhenAbortFails() throws Exception {
+        S3Client s3Client = mock(S3Client.class);
+        stubMultipartStartAndParts(s3Client, "upload-4");
+        when(s3Client.completeMultipartUpload(any(CompleteMultipartUploadRequest.class)))
+                .thenThrow(new RuntimeException("complete failed"));
+        when(s3Client.abortMultipartUpload(any(AbortMultipartUploadRequest.class)))
+                .thenThrow(new RuntimeException("abort failed"));
+        S3TargetUploader uploader = new S3TargetUploader(s3Client, uploadProperties(5, 3));
+        Path localFile = writeFile("abcdef");
+
+        Throwable thrown = catchThrowable(() -> uploader.upload("target-bucket", "abort-fails.bin", localFile));
+
+        assertThat(thrown)
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Failed to upload target object target-bucket/abort-fails.bin")
+                .hasRootCauseMessage("complete failed");
+        assertThat(thrown.getCause().getSuppressed()).extracting(Throwable::getMessage).containsExactly("abort failed");
     }
 
     private static void stubMultipartStartAndParts(S3Client s3Client, String uploadId) {

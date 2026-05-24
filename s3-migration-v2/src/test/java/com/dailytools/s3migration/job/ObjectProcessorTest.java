@@ -110,6 +110,79 @@ class ObjectProcessorTest {
         assertThat(Files.readString(decrypted)).isEqualTo("content");
     }
 
+    @Test
+    void localCleanupFailureAfterSuccessfulUploadDoesNotFailObject() throws Exception {
+        Path decryptedDirectory = tempDir.resolve("decrypted-dir");
+        MigrationProperties properties = properties();
+        RecordingUploader uploader = new RecordingUploader();
+        ObjectProcessor processor = new ObjectProcessor(
+                (bucket, prefix) -> {
+                    writeNonEmptyDirectory(decryptedDirectory);
+                    return decryptedDirectory;
+                },
+                uploader,
+                new FailedLog(new ObjectMapper()),
+                properties);
+        Path failedLog = tempDir.resolve("failed.log");
+
+        ObjectProcessResult result = processor.process(object(), JobMode.BASELINE, "run-1", failedLog);
+
+        assertThat(result).isEqualTo(ObjectProcessResult.SUCCESS);
+        assertThat(uploader.uploadedKey).isEqualTo("folder/object.txt");
+        assertThat(failedLog).doesNotExist();
+        assertThat(decryptedDirectory).exists();
+    }
+
+    @Test
+    void recordsCleanupFailureAsSuppressedWhenOperationAlsoFails() throws Exception {
+        Path decryptedDirectory = tempDir.resolve("failed-decrypted-dir");
+        MigrationProperties properties = properties();
+        TargetUploader failingUploader = (bucketName, key, localFile) -> {
+            throw new IOException("upload failed");
+        };
+        ObjectProcessor processor = new ObjectProcessor(
+                (bucket, prefix) -> {
+                    writeNonEmptyDirectory(decryptedDirectory);
+                    return decryptedDirectory;
+                },
+                failingUploader,
+                new FailedLog(new ObjectMapper()),
+                properties);
+        Path failedLog = tempDir.resolve("failed.log");
+
+        ObjectProcessResult result = processor.process(object(), JobMode.BASELINE, "run-1", failedLog);
+
+        assertThat(result).isEqualTo(ObjectProcessResult.FAILED);
+        assertThat(Files.readString(failedLog))
+                .contains("OBJECT_PROCESSING_FAILED")
+                .contains("IOException: upload failed")
+                .contains("suppressed:")
+                .contains("DirectoryNotEmptyException");
+        assertThat(decryptedDirectory).exists();
+    }
+
+    @Test
+    void dryRunDeletesLocalFileWhenDryRunInspectionFails() throws Exception {
+        Path missingFile = tempDir.resolve("missing-after-decrypt.txt");
+        MigrationProperties properties = properties();
+        properties.getUpload().setDryRun(true);
+        ObjectProcessor processor = new ObjectProcessor(
+                (bucket, prefix) -> {
+                    writeAndDelete(missingFile);
+                    return missingFile;
+                },
+                new RecordingUploader(),
+                new FailedLog(new ObjectMapper()),
+                properties);
+        Path failedLog = tempDir.resolve("failed.log");
+
+        ObjectProcessResult result = processor.process(object(), JobMode.BASELINE, "run-1", failedLog);
+
+        assertThat(result).isEqualTo(ObjectProcessResult.FAILED);
+        assertThat(missingFile).doesNotExist();
+        assertThat(Files.readString(failedLog)).contains("NoSuchFileException");
+    }
+
     private static InventoryObject object() {
         return new InventoryObject("source", "folder/object.txt", Instant.parse("2026-05-20T00:00:00Z"), 1L, "etag");
     }
@@ -128,6 +201,24 @@ class ObjectProcessorTest {
             Files.writeString(path, "content");
         } catch (IOException exception) {
             throw new DecryptException("failed to write test file", exception);
+        }
+    }
+
+    private static void writeNonEmptyDirectory(Path path) throws DecryptException {
+        try {
+            Files.createDirectories(path);
+            Files.writeString(path.resolve("child.txt"), "content");
+        } catch (IOException exception) {
+            throw new DecryptException("failed to write test directory", exception);
+        }
+    }
+
+    private static void writeAndDelete(Path path) throws DecryptException {
+        try {
+            Files.writeString(path, "content");
+            Files.delete(path);
+        } catch (IOException exception) {
+            throw new DecryptException("failed to write and delete test file", exception);
         }
     }
 

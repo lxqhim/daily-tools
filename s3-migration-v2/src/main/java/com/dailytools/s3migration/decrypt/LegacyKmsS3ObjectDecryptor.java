@@ -1,15 +1,12 @@
 package com.dailytools.s3migration.decrypt;
 
-import com.amazonaws.regions.Region;
-import com.amazonaws.regions.Regions;
 import com.amazonaws.services.s3.AmazonS3Encryption;
 import com.amazonaws.services.s3.AmazonS3EncryptionClientBuilder;
 import com.amazonaws.services.s3.model.CryptoConfiguration;
-import com.amazonaws.services.s3.model.CryptoMode;
-import com.amazonaws.services.s3.model.CryptoStorageMode;
 import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.KMSEncryptionMaterialsProvider;
 import com.dailytools.s3migration.config.MigrationProperties;
+import com.dailytools.s3migration.crypto.AwsCryptoConfigurationFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -52,11 +49,8 @@ public class LegacyKmsS3ObjectDecryptor implements S3ObjectDecryptor {
 
     private static CryptoConfiguration cryptoConfiguration(MigrationProperties properties) {
         MigrationProperties.LegacyKms legacyKms = properties.getDecrypt().getLegacyKms();
-        CryptoConfiguration configuration = new CryptoConfiguration()
-                .withCryptoMode(cryptoMode(legacyKms.getCryptoMode()))
-                .withStorageMode(storageMode(legacyKms.getStorageMode()));
-        configuration.withAwsKmsRegion(Region.getRegion(Regions.fromName(kmsRegion(properties))));
-        return configuration;
+        return AwsCryptoConfigurationFactory.create(
+                legacyKms.getCryptoMode(), legacyKms.getStorageMode(), kmsRegion(properties));
     }
 
     private static String kmsRegion(MigrationProperties properties) {
@@ -65,21 +59,6 @@ public class LegacyKmsS3ObjectDecryptor implements S3ObjectDecryptor {
             return configuredKmsRegion;
         }
         return properties.getS3().getRegion();
-    }
-
-    private static CryptoMode cryptoMode(MigrationProperties.LegacyKmsCryptoMode mode) {
-        return switch (mode) {
-            case ENCRYPTION_ONLY -> CryptoMode.EncryptionOnly;
-            case AUTHENTICATED_ENCRYPTION -> CryptoMode.AuthenticatedEncryption;
-            case STRICT_AUTHENTICATED_ENCRYPTION -> CryptoMode.StrictAuthenticatedEncryption;
-        };
-    }
-
-    private static CryptoStorageMode storageMode(MigrationProperties.LegacyKmsStorageMode mode) {
-        return switch (mode) {
-            case OBJECT_METADATA -> CryptoStorageMode.ObjectMetadata;
-            case INSTRUCTION_FILE -> CryptoStorageMode.InstructionFile;
-        };
     }
 
     private static void cleanupPartialFile(Path localFile) {

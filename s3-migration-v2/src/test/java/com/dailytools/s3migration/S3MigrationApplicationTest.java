@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dailytools.s3migration.decrypt.S3ObjectDecryptor;
+import com.dailytools.s3migration.upload.ClientSideKmsTargetUploader;
+import com.dailytools.s3migration.upload.TargetUploader;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -42,6 +44,19 @@ class S3MigrationApplicationTest {
                         "--migration.decrypt.legacy-kms.kms-key-id=alias/test-key",
                         "--migration.paths.temp-dir=" + tempDir.resolve("decrypt-tmp")))) {
             assertThat(context.isRunning()).isTrue();
+        }
+    }
+
+    @Test
+    void contextLoadsWithClientSideKmsTargetUploader() {
+        try (ConfigurableApplicationContext context = new SpringApplicationBuilder(
+                        S3MigrationApplication.class, TestDecryptorConfiguration.class)
+                .properties(baseProperties())
+                .run(args(
+                        "--migration.enabled=false",
+                        "--migration.upload.client-side-kms.enabled=true",
+                        "--migration.upload.client-side-kms.kms-key-id=arn:aws:kms:us-east-1:444455556666:key/target-key-id"))) {
+            assertThat(context.getBean(TargetUploader.class)).isInstanceOf(ClientSideKmsTargetUploader.class);
         }
     }
 

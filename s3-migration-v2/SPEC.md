@@ -142,6 +142,17 @@ After decrypting one object:
 - Delete the local decrypted file after the upload attempt finishes.
 - If upload fails, write the object to `failed.log` and still attempt to delete the local decrypted file.
 
+Target upload modes:
+
+- Plain upload is the default and uses the normal S3 client. The target bucket default SSE configuration applies.
+- Client-side KMS encrypted upload is controlled by `migration.upload.client-side-kms.enabled`. When enabled, the upload path uses the AWS SDK v1 `AmazonS3Encryption` client with `KMSEncryptionMaterialsProvider`.
+- `migration.upload.client-side-kms.kms-key-id` is required when enabled and must be a full KMS key ARN. Alias and bare key id are intentionally not supported for target upload because the target key can live in a different AWS account.
+- `migration.upload.client-side-kms.kms-region` is optional. Defaults to the S3 region when omitted.
+- `migration.upload.client-side-kms.crypto-mode`: `ENCRYPTION_ONLY` (default), `AUTHENTICATED_ENCRYPTION`, or `STRICT_AUTHENTICATED_ENCRYPTION`.
+- `migration.upload.client-side-kms.storage-mode`: `OBJECT_METADATA` (default) or `INSTRUCTION_FILE`.
+- The upload mode does not change object key selection. Target objects are still written to the target bucket with the source object key.
+- Client-side encrypted upload still does not set SSE headers. Bucket default SSE remains an infrastructure-level control.
+
 Upload dry-run:
 
 - Controlled by `migration.upload.dry-run`. Default: `false`.
@@ -166,12 +177,12 @@ The state must track:
 - source bucket and target bucket.
 - baseline manifest URI.
 - baseline status.
-- baseline inventory data file progress.
+- baseline inventory data file progress as a compact cursor: completed file count and last completed file key.
 - baseline observed maximum `LastModifiedDate`.
 - delta watermark.
 - delta observed maximum `LastModifiedDate`.
 - delta candidate watermark for the current in-progress manifest.
-- delta manifest progress.
+- delta manifest progress as a compact cursor: completed file count and last completed file key.
 - success, failed, skipped, and retried counts.
 - timestamps for job start, last checkpoint, and job completion.
 - last run-level error code, message, and timestamp for operator diagnosis.
@@ -195,6 +206,7 @@ Checkpoint granularity:
 - The safe checkpoint is an inventory data file boundary.
 - A data file is marked complete only after all object tasks submitted from that file finish.
 - If the process crashes in the middle of a data file, restart from that data file and accept duplicate processing.
+- The state file must not store the full set of completed inventory data files. It stores only the completed file count and last completed file key, then resumes by skipping that many files in the same manifest and validating the last skipped key.
 
 ## Baseline Job
 

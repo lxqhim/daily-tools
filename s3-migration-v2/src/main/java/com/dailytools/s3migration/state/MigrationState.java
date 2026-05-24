@@ -1,5 +1,7 @@
 package com.dailytools.s3migration.state;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.dailytools.s3migration.job.JobMode;
 import java.time.Instant;
 import java.util.LinkedHashSet;
@@ -16,8 +18,14 @@ public class MigrationState {
     private Instant baselineInventoryTimestamp;
     private Instant baselineObservedMaxLastModified;
     private BaselineStatus baselineStatus = BaselineStatus.NOT_STARTED;
+    private long baselineCompletedFileCount;
+    private String baselineLastCompletedFile;
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
     private Set<String> baselineCompletedFiles = new LinkedHashSet<>();
     private String deltaManifestUri;
+    private long deltaCompletedFileCount;
+    private String deltaLastCompletedFile;
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
     private Set<String> deltaCompletedFiles = new LinkedHashSet<>();
     private Instant deltaWatermark;
     private Instant deltaObservedMaxLastModified;
@@ -102,6 +110,22 @@ public class MigrationState {
         this.baselineStatus = baselineStatus;
     }
 
+    public long getBaselineCompletedFileCount() {
+        return baselineCompletedFileCount;
+    }
+
+    public void setBaselineCompletedFileCount(long baselineCompletedFileCount) {
+        this.baselineCompletedFileCount = baselineCompletedFileCount;
+    }
+
+    public String getBaselineLastCompletedFile() {
+        return baselineLastCompletedFile;
+    }
+
+    public void setBaselineLastCompletedFile(String baselineLastCompletedFile) {
+        this.baselineLastCompletedFile = baselineLastCompletedFile;
+    }
+
     public Set<String> getBaselineCompletedFiles() {
         return baselineCompletedFiles;
     }
@@ -116,6 +140,22 @@ public class MigrationState {
 
     public void setDeltaManifestUri(String deltaManifestUri) {
         this.deltaManifestUri = deltaManifestUri;
+    }
+
+    public long getDeltaCompletedFileCount() {
+        return deltaCompletedFileCount;
+    }
+
+    public void setDeltaCompletedFileCount(long deltaCompletedFileCount) {
+        this.deltaCompletedFileCount = deltaCompletedFileCount;
+    }
+
+    public String getDeltaLastCompletedFile() {
+        return deltaLastCompletedFile;
+    }
+
+    public void setDeltaLastCompletedFile(String deltaLastCompletedFile) {
+        this.deltaLastCompletedFile = deltaLastCompletedFile;
     }
 
     public Set<String> getDeltaCompletedFiles() {
@@ -204,6 +244,53 @@ public class MigrationState {
 
     public void setLastErrorAt(Instant lastErrorAt) {
         this.lastErrorAt = lastErrorAt;
+    }
+
+    @JsonIgnore
+    public long completedFileCount(JobMode mode) {
+        return mode == JobMode.BASELINE ? baselineCompletedFileCount : deltaCompletedFileCount;
+    }
+
+    @JsonIgnore
+    public String lastCompletedFile(JobMode mode) {
+        return mode == JobMode.BASELINE ? baselineLastCompletedFile : deltaLastCompletedFile;
+    }
+
+    public void markFileCompleted(JobMode mode, String key) {
+        if (mode == JobMode.BASELINE) {
+            baselineCompletedFileCount++;
+            baselineLastCompletedFile = key;
+        } else if (mode == JobMode.DELTA) {
+            deltaCompletedFileCount++;
+            deltaLastCompletedFile = key;
+        }
+    }
+
+    public void resetDeltaProgress() {
+        deltaCompletedFileCount = 0;
+        deltaLastCompletedFile = null;
+        deltaCompletedFiles.clear();
+    }
+
+    public void migrateCompletedFileSetsToCursors() {
+        if (baselineCompletedFileCount == 0 && !baselineCompletedFiles.isEmpty()) {
+            baselineCompletedFileCount = baselineCompletedFiles.size();
+            baselineLastCompletedFile = lastOf(baselineCompletedFiles);
+        }
+        if (deltaCompletedFileCount == 0 && !deltaCompletedFiles.isEmpty()) {
+            deltaCompletedFileCount = deltaCompletedFiles.size();
+            deltaLastCompletedFile = lastOf(deltaCompletedFiles);
+        }
+        baselineCompletedFiles.clear();
+        deltaCompletedFiles.clear();
+    }
+
+    private static String lastOf(Set<String> values) {
+        String last = null;
+        for (String value : values) {
+            last = value;
+        }
+        return last;
     }
 
     public static class Counters {

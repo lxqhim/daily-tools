@@ -43,6 +43,7 @@ public class StateStore {
             throw new IOException("State file does not exist: " + path);
         }
         MigrationState state = objectMapper.readValue(path.toFile(), MigrationState.class);
+        state.migrateCompletedFileSetsToCursors();
         validateState(state, properties);
         return state;
     }
@@ -54,11 +55,33 @@ public class StateStore {
             Files.createDirectories(parent);
         }
         Path tempFile = Files.createTempFile(parent, absolutePath.getFileName().toString(), ".tmp");
-        objectMapper.writeValue(tempFile.toFile(), state);
+        try {
+            objectMapper.writeValue(tempFile.toFile(), state);
+            moveIntoPlace(tempFile, absolutePath);
+        } catch (IOException | RuntimeException exception) {
+            cleanupTempFile(tempFile, exception);
+            throw exception;
+        }
+    }
+
+    private static void moveIntoPlace(Path tempFile, Path absolutePath) throws IOException {
         try {
             Files.move(tempFile, absolutePath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException exception) {
-            Files.move(tempFile, absolutePath, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException atomicMoveException) {
+            try {
+                Files.move(tempFile, absolutePath, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException fallbackMoveException) {
+                fallbackMoveException.addSuppressed(atomicMoveException);
+                throw fallbackMoveException;
+            }
+        }
+    }
+
+    private static void cleanupTempFile(Path tempFile, Exception writeFailure) {
+        try {
+            Files.deleteIfExists(tempFile);
+        } catch (Exception cleanupException) {
+            writeFailure.addSuppressed(cleanupException);
         }
     }
 

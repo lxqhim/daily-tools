@@ -29,6 +29,33 @@ class MigrationPropertiesTest {
         assertThatCode(properties::validateForRun).doesNotThrowAnyException();
     }
 
+    @Test
+    void clientSideKmsUploadRequiresKmsKeyArnWhenEnabled() {
+        MigrationProperties properties = retryProperties();
+        properties.getUpload().getClientSideKms().setEnabled(true);
+
+        assertThatThrownBy(properties::validateForRun)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("migration.upload.client-side-kms.kms-key-id");
+
+        properties.getUpload().getClientSideKms().setKmsKeyId("alias/target-key");
+
+        assertThatThrownBy(properties::validateForRun)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be a full KMS key ARN");
+    }
+
+    @Test
+    void clientSideKmsUploadValidationPassesWithKmsKeyArn() {
+        MigrationProperties properties = retryProperties();
+        properties.getUpload().getClientSideKms().setEnabled(true);
+        properties.getUpload()
+                .getClientSideKms()
+                .setKmsKeyId("arn:aws:kms:us-east-1:444455556666:key/target-key-id");
+
+        assertThatCode(properties::validateForRun).doesNotThrowAnyException();
+    }
+
     private static MigrationProperties retryProperties() {
         MigrationProperties properties = new MigrationProperties();
         properties.getJob().setMode(JobMode.RETRY);

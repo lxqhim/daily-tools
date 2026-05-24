@@ -17,13 +17,13 @@ import com.dailytools.s3migration.state.MigrationState;
 import com.dailytools.s3migration.state.StateStore;
 import java.io.InputStream;
 import java.time.Instant;
-import java.util.LinkedHashSet;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -106,7 +106,6 @@ public class MigrationService {
                 manifest,
                 JobMode.BASELINE,
                 runId,
-                new LinkedHashSet<>(),
                 null,
                 total,
                 false,
@@ -152,7 +151,6 @@ public class MigrationService {
                 manifest,
                 JobMode.DELTA,
                 runId,
-                new LinkedHashSet<>(),
                 previousWatermark,
                 total,
                 false,
@@ -247,7 +245,6 @@ public class MigrationService {
                     manifest,
                     JobMode.BASELINE,
                     runId,
-                    state.getBaselineCompletedFiles(),
                     null,
                     total);
             state.setDeltaWatermark(watermarkPolicy.initialAfterBaseline(total));
@@ -295,7 +292,7 @@ public class MigrationService {
                 manifestUri.toUriString());
         if (!manifestUri.toUriString().equals(state.getDeltaManifestUri())) {
             state.setDeltaManifestUri(manifestUri.toUriString());
-            state.getDeltaCompletedFiles().clear();
+            state.resetDeltaProgress();
             state.setDeltaObservedMaxLastModified(null);
             state.setDeltaCandidateWatermark(null);
         }
@@ -324,7 +321,6 @@ public class MigrationService {
                     manifest,
                     JobMode.DELTA,
                     runId,
-                    state.getDeltaCompletedFiles(),
                     previousWatermark,
                     total);
             state.setDeltaWatermark(watermarkPolicy.advanceAfterDelta(previousWatermark, total));
@@ -401,11 +397,10 @@ public class MigrationService {
             InventoryManifest manifest,
             JobMode mode,
             String runId,
-            Set<String> completedFiles,
             Instant watermark,
             ProcessingSummary total)
             throws Exception {
-        processManifestFiles(state, inventoryBucket, manifest, mode, runId, completedFiles, watermark, total, true, null);
+        processManifestFiles(state, inventoryBucket, manifest, mode, runId, watermark, total, true, null);
     }
 
     private void processManifestFiles(
@@ -414,13 +409,11 @@ public class MigrationService {
             InventoryManifest manifest,
             JobMode mode,
             String runId,
-            Set<String> completedFiles,
             Instant watermark,
             ProcessingSummary total,
             boolean writeCheckpoints)
             throws Exception {
-        processManifestFiles(
-                state, inventoryBucket, manifest, mode, runId, completedFiles, watermark, total, writeCheckpoints, null);
+        processManifestFiles(state, inventoryBucket, manifest, mode, runId, watermark, total, writeCheckpoints, null);
     }
 
     private void processManifestFiles(
@@ -429,7 +422,6 @@ public class MigrationService {
             InventoryManifest manifest,
             JobMode mode,
             String runId,
-            Set<String> completedFiles,
             Instant watermark,
             ProcessingSummary total,
             boolean writeCheckpoints,
@@ -437,8 +429,16 @@ public class MigrationService {
             throws Exception {
         ThreadPoolExecutor executor = newWorkerExecutor();
         try {
+            long completedToSkip = writeCheckpoints ? state.completedFileCount(mode) : 0;
+            long skippedCompleted = 0;
+            String lastSkippedCompletedFile = null;
             for (InventoryDataFile file : manifest.files()) {
-                if (completedFiles.contains(file.key())) {
+                if (skippedCompleted < completedToSkip) {
+                    skippedCompleted++;
+                    lastSkippedCompletedFile = file.key();
+                    if (skippedCompleted == completedToSkip) {
+                        validateCompletedFileCursor(state, mode, lastSkippedCompletedFile);
+                    }
                     continue;
                 }
                 if (dryRunSampleLimiter != null && dryRunSampleLimiter.reached()) {
@@ -456,7 +456,7 @@ public class MigrationService {
                 ProcessingSummary fileSummary = fileResult.summary();
                 total.add(fileSummary);
                 if (writeCheckpoints) {
-                    completedFiles.add(file.key());
+                    state.markFileCompleted(mode, file.key());
                     state.getCounters().add(fileSummary.counters());
                     checkpointObservedWatermark(state, mode, watermark, total);
                     state.setLastCheckpointAt(Instant.now());
@@ -482,8 +482,21 @@ public class MigrationService {
                     break;
                 }
             }
+            if (skippedCompleted < completedToSkip) {
+                throw new IllegalStateException("Stored " + mode + " completed file cursor is past manifest length: "
+                        + completedToSkip + " completed files");
+            }
         } finally {
             executor.shutdownNow();
+        }
+    }
+
+    private static void validateCompletedFileCursor(MigrationState state, JobMode mode, String actualLastSkippedFile) {
+        String expectedLastCompletedFile = state.lastCompletedFile(mode);
+        if (expectedLastCompletedFile != null && !expectedLastCompletedFile.equals(actualLastSkippedFile)) {
+            throw new IllegalStateException("Stored " + mode + " completed file cursor does not match manifest order: "
+                    + "expected last completed file " + expectedLastCompletedFile
+                    + " but skipped " + actualLastSkippedFile);
         }
     }
 
@@ -541,8 +554,12 @@ public class MigrationService {
                             inFlight[0]++;
                             progress.submitted();
                             if (inFlight[0] >= maxInFlight) {
-                                waitForOneCompletion(completionService, mode, runId, file, progress, summary, inFlight[0]);
-                                inFlight[0]--;
+                                try {
+                                    waitForOneCompletion(
+                                            completionService, mode, runId, file, progress, summary, inFlight[0]);
+                                } finally {
+                                    inFlight[0]--;
+                                }
                             }
                             logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
                         },
@@ -555,8 +572,11 @@ public class MigrationService {
                 sampleLimitReached = true;
             }
             while (inFlight[0] > 0) {
-                waitForOneCompletion(completionService, mode, runId, file, progress, summary, inFlight[0]);
-                inFlight[0]--;
+                try {
+                    waitForOneCompletion(completionService, mode, runId, file, progress, summary, inFlight[0]);
+                } finally {
+                    inFlight[0]--;
+                }
                 logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
             }
             return new DataFileProcessingResult(summary, sampleLimitReached);
@@ -572,7 +592,23 @@ public class MigrationService {
                 0L,
                 TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(queueSize),
-                new ThreadPoolExecutor.CallerRunsPolicy());
+                new BlockingRejectedExecutionHandler());
+    }
+
+    static class BlockingRejectedExecutionHandler implements RejectedExecutionHandler {
+
+        @Override
+        public void rejectedExecution(Runnable runnable, ThreadPoolExecutor executor) {
+            if (executor.isShutdown()) {
+                throw new RejectedExecutionException("Executor is shut down");
+            }
+            try {
+                executor.getQueue().put(runnable);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new RejectedExecutionException("Interrupted while waiting for worker queue capacity", exception);
+            }
+        }
     }
 
     private void waitForOneCompletion(

@@ -68,10 +68,20 @@ public class MigrationProperties {
         if (decrypt.legacyKms.enabled && isBlank(decrypt.legacyKms.kmsKeyId)) {
             throw new IllegalArgumentException("migration.decrypt.legacy-kms.kms-key-id is required when legacy KMS decrypt is enabled");
         }
+        if (upload.clientSideKms.enabled && isBlank(upload.clientSideKms.kmsKeyId)) {
+            throw new IllegalArgumentException("migration.upload.client-side-kms.kms-key-id is required when client-side KMS upload is enabled");
+        }
+        if (upload.clientSideKms.enabled && !isKmsKeyArn(upload.clientSideKms.kmsKeyId)) {
+            throw new IllegalArgumentException("migration.upload.client-side-kms.kms-key-id must be a full KMS key ARN");
+        }
     }
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private static boolean isKmsKeyArn(String value) {
+        return value != null && value.startsWith("arn:") && value.contains(":kms:") && value.contains(":key/");
     }
 
     public boolean isEnabled() {
@@ -336,6 +346,8 @@ public class MigrationProperties {
         private long multipartThresholdBytes = 134_217_728L;
         @Min(5_242_880)
         private int multipartPartSizeBytes = 67_108_864;
+        @Valid
+        private ClientSideKms clientSideKms = new ClientSideKms();
 
         public boolean isDryRun() {
             return dryRun;
@@ -367,6 +379,64 @@ public class MigrationProperties {
 
         public void setMultipartPartSizeBytes(int multipartPartSizeBytes) {
             this.multipartPartSizeBytes = multipartPartSizeBytes;
+        }
+
+        public ClientSideKms getClientSideKms() {
+            return clientSideKms;
+        }
+
+        public void setClientSideKms(ClientSideKms clientSideKms) {
+            this.clientSideKms = clientSideKms;
+        }
+    }
+
+    public static class ClientSideKms {
+        private boolean enabled;
+        private String kmsKeyId;
+        private String kmsRegion;
+        @NotNull
+        private LegacyKmsCryptoMode cryptoMode = LegacyKmsCryptoMode.ENCRYPTION_ONLY;
+        @NotNull
+        private LegacyKmsStorageMode storageMode = LegacyKmsStorageMode.OBJECT_METADATA;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getKmsKeyId() {
+            return kmsKeyId;
+        }
+
+        public void setKmsKeyId(String kmsKeyId) {
+            this.kmsKeyId = kmsKeyId;
+        }
+
+        public String getKmsRegion() {
+            return kmsRegion;
+        }
+
+        public void setKmsRegion(String kmsRegion) {
+            this.kmsRegion = kmsRegion;
+        }
+
+        public LegacyKmsCryptoMode getCryptoMode() {
+            return cryptoMode;
+        }
+
+        public void setCryptoMode(LegacyKmsCryptoMode cryptoMode) {
+            this.cryptoMode = cryptoMode;
+        }
+
+        public LegacyKmsStorageMode getStorageMode() {
+            return storageMode;
+        }
+
+        public void setStorageMode(LegacyKmsStorageMode storageMode) {
+            this.storageMode = storageMode;
         }
     }
 

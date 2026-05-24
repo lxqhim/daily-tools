@@ -48,7 +48,8 @@ public class ObjectProcessor {
         } catch (Exception exception) {
             operationFailure = exception;
         } finally {
-            if (localFile != null && !properties.getUpload().isDryRun()) {
+            boolean successfulDryRun = operationFailure == null && properties.getUpload().isDryRun();
+            if (localFile != null && !successfulDryRun) {
                 try {
                     Files.deleteIfExists(localFile);
                 } catch (Exception exception) {
@@ -58,12 +59,20 @@ public class ObjectProcessor {
         }
 
         if (operationFailure != null) {
+            if (cleanupFailure != null) {
+                operationFailure.addSuppressed(cleanupFailure);
+            }
             appendFailure(failedLogPath, object, mode, runId, "OBJECT_PROCESSING_FAILED", operationFailure);
             return ObjectProcessResult.FAILED;
         }
         if (cleanupFailure != null) {
-            appendFailure(failedLogPath, object, mode, runId, "LOCAL_CLEANUP_FAILED", cleanupFailure);
-            return ObjectProcessResult.FAILED;
+            log.warn(
+                    "Failed to delete local temp file after successful object processing sourceBucket={} targetBucket={} key={} localFile={}",
+                    properties.getS3().getSourceBucket(),
+                    properties.getS3().getTargetBucket(),
+                    object.key(),
+                    localFile,
+                    cleanupFailure);
         }
         return properties.getUpload().isDryRun() ? ObjectProcessResult.DRY_RUN_SUCCESS : ObjectProcessResult.SUCCESS;
     }
@@ -97,6 +106,11 @@ public class ObjectProcessor {
 
     private static String exceptionSummary(Throwable throwable) {
         StringBuilder summary = new StringBuilder();
+        appendExceptionSummary(summary, throwable);
+        return summary.toString();
+    }
+
+    private static void appendExceptionSummary(StringBuilder summary, Throwable throwable) {
         Throwable current = throwable;
         while (current != null) {
             if (!summary.isEmpty()) {
@@ -109,6 +123,11 @@ public class ObjectProcessor {
             }
             current = current.getCause();
         }
-        return summary.toString();
+        for (Throwable suppressed : throwable.getSuppressed()) {
+            if (!summary.isEmpty()) {
+                summary.append(" | suppressed: ");
+            }
+            appendExceptionSummary(summary, suppressed);
+        }
     }
 }

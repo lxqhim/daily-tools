@@ -64,7 +64,9 @@ class MigrationServiceBaselineTest {
 
         MigrationState abortedState = stateStore.loadOrCreate(properties.getPaths().getState(), properties);
         assertThat(abortedState.getBaselineStatus()).isEqualTo(BaselineStatus.ABORTED);
-        assertThat(abortedState.getBaselineCompletedFiles()).containsExactly(FILE_ONE);
+        assertThat(abortedState.getBaselineCompletedFileCount()).isEqualTo(1);
+        assertThat(abortedState.getBaselineLastCompletedFile()).isEqualTo(FILE_ONE);
+        assertThat(abortedState.getBaselineCompletedFiles()).isEmpty();
         assertThat(abortedState.getCounters().getSuccess()).isEqualTo(1);
         assertThat(abortedState.getBaselineObservedMaxLastModified())
                 .isEqualTo(Instant.parse("2026-05-18T00:00:00Z"));
@@ -84,7 +86,9 @@ class MigrationServiceBaselineTest {
         MigrationState completedState = stateStore.loadOrCreate(properties.getPaths().getState(), properties);
         assertThat(uploadedSecondRun).containsExactly("second file.txt");
         assertThat(completedState.getBaselineStatus()).isEqualTo(BaselineStatus.COMPLETED);
-        assertThat(completedState.getBaselineCompletedFiles()).containsExactly(FILE_ONE, FILE_TWO);
+        assertThat(completedState.getBaselineCompletedFileCount()).isEqualTo(2);
+        assertThat(completedState.getBaselineLastCompletedFile()).isEqualTo(FILE_TWO);
+        assertThat(completedState.getBaselineCompletedFiles()).isEmpty();
         assertThat(completedState.getCounters().getSuccess()).isEqualTo(2);
         assertThat(completedState.getCounters().getFailed()).isZero();
         assertThat(completedState.getCurrentMode()).isEqualTo(JobMode.BASELINE);

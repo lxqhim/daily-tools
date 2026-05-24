@@ -4,6 +4,7 @@ import com.dailytools.s3migration.decrypt.S3ObjectDecryptor;
 import com.dailytools.s3migration.decrypt.LegacyKmsS3ObjectDecryptor;
 import com.dailytools.s3migration.s3.AwsS3ObjectReader;
 import com.dailytools.s3migration.s3.S3ObjectReader;
+import com.dailytools.s3migration.upload.ClientSideKmsTargetUploader;
 import com.dailytools.s3migration.upload.S3TargetUploader;
 import com.dailytools.s3migration.upload.TargetUploader;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,8 +44,20 @@ public class AwsConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(
+            prefix = "migration.upload.client-side-kms",
+            name = "enabled",
+            havingValue = "false",
+            matchIfMissing = true)
     TargetUploader targetUploader(S3Client s3Client, MigrationProperties properties) {
         return new S3TargetUploader(s3Client, properties.getUpload());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "migration.upload.client-side-kms", name = "enabled", havingValue = "true")
+    TargetUploader clientSideKmsTargetUploader(MigrationProperties properties) {
+        return new ClientSideKmsTargetUploader(properties);
     }
 
     @Bean

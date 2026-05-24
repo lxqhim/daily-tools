@@ -31,14 +31,14 @@ public class S3TargetUploader implements TargetUploader {
 
     @Override
     public void upload(String bucketName, String key, Path localFile) throws IOException {
-        long size = Files.size(localFile);
         try {
+            long size = Files.size(localFile);
             if (size < uploadProperties.getMultipartThresholdBytes()) {
                 putObject(bucketName, key, localFile);
             } else {
                 multipartUpload(bucketName, key, localFile);
             }
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException | IOException exception) {
             throw new IOException("Failed to upload target object " + bucketName + "/" + key, exception);
         }
     }
@@ -83,11 +83,15 @@ public class S3TargetUploader implements TargetUploader {
                     .multipartUpload(completedMultipartUpload)
                     .build());
         } catch (RuntimeException | IOException exception) {
-            s3Client.abortMultipartUpload(AbortMultipartUploadRequest.builder()
-                    .bucket(bucketName)
-                    .key(key)
-                    .uploadId(uploadId)
-                    .build());
+            try {
+                s3Client.abortMultipartUpload(AbortMultipartUploadRequest.builder()
+                        .bucket(bucketName)
+                        .key(key)
+                        .uploadId(uploadId)
+                        .build());
+            } catch (Exception abortException) {
+                exception.addSuppressed(abortException);
+            }
             throw exception;
         }
     }

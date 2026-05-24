@@ -58,6 +58,7 @@ Acceptance criteria:
 - Implement atomic state writes with temp file plus rename.
 - Track baseline status, manifest progress, delta watermark, and counters.
 - Use inventory data file boundary checkpointing.
+- Store data file progress as a compact ordered cursor, not as a full set of completed file keys.
 
 Acceptance criteria:
 
@@ -97,6 +98,8 @@ Acceptance criteria:
 ## Task 8: Target Upload and Local Cleanup
 
 - Upload returned local file to the target bucket with the same object key.
+- Support plain target upload and optional AWS SDK v1 client-side KMS encrypted target upload.
+- Require a full target KMS key ARN when client-side KMS upload is enabled.
 - Treat target object as a new file.
 - Do not copy source metadata, tags, ACLs, or content type.
 - Delete returned local file after every upload attempt.
