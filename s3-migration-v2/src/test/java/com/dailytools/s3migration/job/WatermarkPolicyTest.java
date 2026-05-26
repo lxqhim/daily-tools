@@ -3,6 +3,7 @@ package com.dailytools.s3migration.job;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.dailytools.s3migration.config.MigrationProperties;
+import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
@@ -23,7 +24,8 @@ class WatermarkPolicyTest {
         summary.observeLastModified(Instant.parse("2026-04-10T00:00:00Z"));
         summary.observeLastModified(Instant.parse("2026-04-12T00:00:00Z"));
 
-        assertThat(policy(null).initialAfterBaseline(summary)).isEqualTo(Instant.parse("2026-04-12T00:00:00Z"));
+        assertThat(policy(null, Duration.ZERO).initialAfterBaseline(summary))
+                .isEqualTo(Instant.parse("2026-04-12T00:00:00Z"));
     }
 
     @Test
@@ -40,12 +42,24 @@ class WatermarkPolicyTest {
     }
 
     @Test
-    void deltaWatermarkAdvancesOnlyToObservedMaxLastModified() {
+    void deltaWatermarkAdvancesOnlyToObservedMaxLastModifiedMinusLookback() {
         Instant previous = Instant.parse("2026-04-10T00:00:00Z");
         ProcessingSummary summary = new ProcessingSummary();
         summary.observeLastModified(Instant.parse("2026-04-12T00:00:00Z"));
 
-        assertThat(policy(null).advanceAfterDelta(previous, summary)).isEqualTo(Instant.parse("2026-04-12T00:00:00Z"));
+        assertThat(policy(null, Duration.ofHours(48)).advanceAfterDelta(previous, summary))
+                .isEqualTo(Instant.parse("2026-04-10T00:00:00Z"));
+        assertThat(policy(null, Duration.ofHours(24)).advanceAfterDelta(previous, summary))
+                .isEqualTo(Instant.parse("2026-04-11T00:00:00Z"));
+    }
+
+    @Test
+    void baselineWatermarkAppliesLookbackWhenNoConfiguredWatermarkExists() {
+        ProcessingSummary summary = new ProcessingSummary();
+        summary.observeLastModified(Instant.parse("2026-04-12T00:00:00Z"));
+
+        assertThat(policy(null, Duration.ofHours(48)).initialAfterBaseline(summary))
+                .isEqualTo(Instant.parse("2026-04-10T00:00:00Z"));
     }
 
     @Test
@@ -59,8 +73,13 @@ class WatermarkPolicyTest {
     }
 
     private static WatermarkPolicy policy(Instant configuredWatermark) {
+        return policy(configuredWatermark, Duration.ofHours(48));
+    }
+
+    private static WatermarkPolicy policy(Instant configuredWatermark, Duration deltaLookback) {
         MigrationProperties properties = new MigrationProperties();
         properties.getJob().setInitialWatermark(configuredWatermark);
+        properties.getJob().setDeltaLookback(deltaLookback);
         return new WatermarkPolicy(properties);
     }
 }

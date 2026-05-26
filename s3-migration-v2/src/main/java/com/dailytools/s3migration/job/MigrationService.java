@@ -111,11 +111,13 @@ public class MigrationService {
                 false,
                 sampleLimiter);
         log.info(
-                "Completed baseline upload dry-run runId={} dryRun=true shard={}/{} summary={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                "Completed baseline upload dry-run runId={} dryRun=true shard={}/{} summary={} scannedRows={} submittedRows={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
                 total.counters(),
+                total.scannedRows(),
+                total.submittedRows(),
                 sampleLimiter.submitted(),
                 sampleLimiter.limit(),
                 sampleLimiter.reached());
@@ -156,11 +158,13 @@ public class MigrationService {
                 false,
                 sampleLimiter);
         log.info(
-                "Completed delta upload dry-run runId={} dryRun=true shard={}/{} summary={} candidateWatermark={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                "Completed delta upload dry-run runId={} dryRun=true shard={}/{} summary={} scannedRows={} submittedRows={} candidateWatermark={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
                 total.counters(),
+                total.scannedRows(),
+                total.submittedRows(),
                 watermarkPolicy.advanceAfterDelta(previousWatermark, total),
                 sampleLimiter.submitted(),
                 sampleLimiter.limit(),
@@ -260,12 +264,14 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed baseline runId={} dryRun=false status={} shard={}/{} counters={}",
+                    "Completed baseline runId={} dryRun=false status={} shard={}/{} counters={} scannedRows={} submittedRows={}",
                     runId,
                     state.getBaselineStatus(),
                     properties.getShard().getIndex(),
                     properties.getShard().getTotal(),
-                    state.getCounters());
+                    state.getCounters(),
+                    total.scannedRows(),
+                    total.submittedRows());
         } catch (Exception exception) {
             state.setBaselineStatus(BaselineStatus.ABORTED);
             recordRunFailure(state, "BASELINE_ABORTED", exception);
@@ -329,13 +335,15 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed delta runId={} dryRun=false shard={}/{} previousWatermark={} newWatermark={} counters={}",
+                    "Completed delta runId={} dryRun=false shard={}/{} previousWatermark={} newWatermark={} counters={} scannedRows={} submittedRows={}",
                     runId,
                     properties.getShard().getIndex(),
                     properties.getShard().getTotal(),
                     previousWatermark,
                     state.getDeltaWatermark(),
-                    state.getCounters());
+                    state.getCounters(),
+                    total.scannedRows(),
+                    total.submittedRows());
         } catch (Exception exception) {
             recordRunFailure(state, "DELTA_ABORTED", exception);
             state.setLastCheckpointAt(Instant.now());
@@ -463,11 +471,13 @@ public class MigrationService {
                     stateStore.write(properties.getPaths().getState(), state);
                 }
                 log.info(
-                        "Processed inventory data file mode={} runId={} key={} summary={} observedMaxLastModified={} candidateWatermark={} stateCheckpointed={}",
+                        "Processed inventory data file mode={} runId={} key={} summary={} scannedRows={} submittedRows={} observedMaxLastModified={} candidateWatermark={} stateCheckpointed={}",
                         mode,
                         runId,
                         file.key(),
                         fileSummary.counters(),
+                        fileSummary.scannedRows(),
+                        fileSummary.submittedRows(),
                         total.maxLastModified(),
                         state.getDeltaCandidateWatermark(),
                         writeCheckpoints);
@@ -525,6 +535,7 @@ public class MigrationService {
                         fileSchema,
                         object -> {
                             progress.scanned();
+                            summary.scanned();
                             if (!properties.getS3().getSourceBucket().equals(object.bucket())) {
                                 summary.skipped();
                                 logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
@@ -553,6 +564,7 @@ public class MigrationService {
                                             object, mode, runId, properties.getPaths().getFailedLog()));
                             inFlight[0]++;
                             progress.submitted();
+                            summary.submitted();
                             if (inFlight[0] >= maxInFlight) {
                                 try {
                                     waitForOneCompletion(
@@ -565,6 +577,7 @@ public class MigrationService {
                         },
                         failure -> {
                             progress.scanned();
+                            summary.scanned();
                             handleRowParseFailure(file, mode, runId, summary, failure);
                             logDataFileProgressIfDue(mode, runId, file, progress, summary, inFlight[0]);
                         });

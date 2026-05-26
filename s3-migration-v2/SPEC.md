@@ -237,12 +237,13 @@ Rules:
 Initial delta watermark:
 
 - After baseline completes, initialize the delta lower bound from an explicitly configured baseline watermark if present.
-- If no explicit watermark is configured, initialize from the maximum `LastModifiedDate` actually observed for this shard while scanning the baseline manifest.
+- If no explicit watermark is configured, initialize from the maximum `LastModifiedDate` actually observed for this shard while scanning the baseline manifest minus the configured delta lookback window.
 - If the baseline shard observes no owned rows, initialize from `Instant.EPOCH`.
 - Do not use the inventory folder date or manifest `creationTimestamp` as the delta watermark. Those values describe report generation or delivery timing, not the freshness of object rows.
 - The first delta run after baseline must catch objects written or overwritten after the baseline inventory snapshot.
-- After each successful delta scan, advance the watermark only to the maximum `LastModifiedDate` actually observed for this shard in that delta run. If the delta run observes no newer owned rows, keep the previous watermark.
+- After each successful delta scan, advance the watermark only to the maximum `LastModifiedDate` actually observed for this shard in that delta run minus the configured delta lookback window. If that candidate is not newer than the previous watermark, keep the previous watermark.
 - The committed `deltaWatermark` is updated only after the whole manifest succeeds; the in-progress `deltaCandidateWatermark` may be written earlier for visibility and resume safety.
+- The default delta lookback is `48h` to tolerate inventory reports that omit some objects whose `LastModifiedDate` is older than the maximum row already observed in a previous report.
 
 ## Failed Log
 

@@ -17,4 +17,22 @@ class ProcessingSummaryTest {
         assertThat(summary.counters().dryRunSuccess()).isEqualTo(1);
         assertThat(summary.counters().failed()).isZero();
     }
+
+    @Test
+    void aggregatesScannedAndSubmittedRows() {
+        ProcessingSummary first = new ProcessingSummary();
+        first.scanned();
+        first.scanned();
+        first.submitted();
+
+        ProcessingSummary second = new ProcessingSummary();
+        second.scanned();
+        second.submitted();
+        second.submitted();
+
+        first.add(second);
+
+        assertThat(first.scannedRows()).isEqualTo(3);
+        assertThat(first.submittedRows()).isEqualTo(3);
+    }
 }

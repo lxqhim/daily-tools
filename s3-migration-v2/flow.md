@@ -269,8 +269,9 @@ When allowed:
 8. Write object-level failures to the delta failed log.
 9. Track the maximum `LastModifiedDate` actually observed for owned rows in this delta run.
 10. At each completed data file boundary, write `deltaObservedMaxLastModified` and `deltaCandidateWatermark` to `state.json`.
-11. After the whole manifest is scanned, advance the committed `deltaWatermark` to that observed maximum only if it is newer than the previous watermark.
-12. Atomically write the updated state.
+11. After the whole manifest is scanned, compute `candidateWatermark = observedMaxLastModified - deltaLookback`.
+12. Advance the committed `deltaWatermark` to that candidate only if it is newer than the previous watermark.
+13. Atomically write the updated state.
 
 The comparison uses `>=`, not `>`, so objects on the boundary may be processed twice. This avoids missing objects with equal timestamps.
 
@@ -279,6 +280,8 @@ If the delta run aborts before scanning the full manifest, do not advance the wa
 If the delta run resumes after some data files were already checkpointed, the saved `deltaObservedMaxLastModified` is loaded and folded into the candidate watermark. This prevents losing the observed maximum from files that are skipped on resume.
 
 The inventory report date, folder date, and manifest `creationTimestamp` are not used as watermarks. For example, an inventory delivered around `T-28` may still only reflect object rows up to `T-30` or `T-31`; using the report date would skip objects. The watermark is based on row-level `LastModifiedDate` values that the shard actually scanned, or on an operator-provided initial watermark.
+
+The committed watermark keeps a lookback window, default `48h`. If a report observes a maximum `LastModifiedDate` of `2026-05-26T01:00:00Z`, the committed watermark becomes at most `2026-05-24T01:00:00Z`. This intentionally repeats recent objects so a later inventory can still include objects with older timestamps that were missing from the earlier report.
 
 Run-level delta failures write `lastErrorCode`, `lastErrorMessage`, and `lastErrorAt` into `state.json` and log the error. Delta has no separate terminal status; the committed `deltaWatermark` remains unchanged on failure.
 

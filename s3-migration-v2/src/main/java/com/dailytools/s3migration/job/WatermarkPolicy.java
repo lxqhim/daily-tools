@@ -19,7 +19,7 @@ public class WatermarkPolicy {
             return configured;
         }
         Instant observed = baselineSummary.maxLastModified();
-        return observed == null ? Instant.EPOCH : observed;
+        return observed == null ? Instant.EPOCH : applyLookback(observed);
     }
 
     public Instant initialForDeltaWhenStateMissing() {
@@ -29,9 +29,16 @@ public class WatermarkPolicy {
 
     public Instant advanceAfterDelta(Instant previousWatermark, ProcessingSummary deltaSummary) {
         Instant observed = deltaSummary.maxLastModified();
-        if (observed != null && observed.isAfter(previousWatermark)) {
-            return observed;
+        if (observed != null) {
+            Instant candidate = applyLookback(observed);
+            if (candidate.isAfter(previousWatermark)) {
+                return candidate;
+            }
         }
         return previousWatermark;
+    }
+
+    private Instant applyLookback(Instant observed) {
+        return observed.minus(properties.getJob().getDeltaLookback());
     }
 }

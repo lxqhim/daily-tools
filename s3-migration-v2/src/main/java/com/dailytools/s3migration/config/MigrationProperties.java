@@ -50,6 +50,9 @@ public class MigrationProperties {
         if (job.mode == null) {
             throw new IllegalArgumentException("migration.job.mode is required");
         }
+        if (job.deltaLookback == null || job.deltaLookback.isNegative()) {
+            throw new IllegalArgumentException("migration.job.delta-lookback must not be negative");
+        }
         if (isBlank(s3.sourceBucket)) {
             throw new IllegalArgumentException("migration.s3.source-bucket is required");
         }
@@ -169,6 +172,8 @@ public class MigrationProperties {
         private JobMode mode;
         private String runId;
         private Instant initialWatermark;
+        @NotNull
+        private Duration deltaLookback = Duration.ofHours(48);
 
         public JobMode getMode() {
             return mode;
@@ -192,6 +197,14 @@ public class MigrationProperties {
 
         public void setInitialWatermark(Instant initialWatermark) {
             this.initialWatermark = initialWatermark;
+        }
+
+        public Duration getDeltaLookback() {
+            return deltaLookback;
+        }
+
+        public void setDeltaLookback(Duration deltaLookback) {
+            this.deltaLookback = deltaLookback;
         }
     }
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dailytools.s3migration.job.JobMode;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -54,6 +55,16 @@ class MigrationPropertiesTest {
                 .setKmsKeyId("arn:aws:kms:us-east-1:444455556666:key/target-key-id");
 
         assertThatCode(properties::validateForRun).doesNotThrowAnyException();
+    }
+
+    @Test
+    void deltaLookbackMustNotBeNegative() {
+        MigrationProperties properties = retryProperties();
+        properties.getJob().setDeltaLookback(Duration.ofHours(-1));
+
+        assertThatThrownBy(properties::validateForRun)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("migration.job.delta-lookback");
     }
 
     private static MigrationProperties retryProperties() {

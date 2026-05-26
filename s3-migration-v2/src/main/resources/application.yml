@@ -4,6 +4,8 @@ spring:
 
 migration:
   enabled: true
+  job:
+    delta-lookback: 48h
   s3:
     region: us-east-1
   worker:

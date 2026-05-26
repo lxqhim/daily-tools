@@ -68,6 +68,7 @@ migration:
     mode: baseline
     run-id: optional-human-readable-id
     initial-watermark: 2026-04-01T00:00:00Z
+    delta-lookback: 48h
   s3:
     region: us-east-1
     source-bucket: source-bucket-name
@@ -100,7 +101,9 @@ migration:
     max-failed-log-bytes: 10737418240
 ```
 
-`initial-watermark` is optional. If omitted, baseline completion initializes the delta watermark from the maximum row-level `LastModifiedDate` observed by this shard.
+`initial-watermark` is optional. If omitted, baseline completion initializes the delta watermark from the maximum row-level `LastModifiedDate` observed by this shard minus `delta-lookback`.
+
+`delta-lookback` defaults to `48h`. After baseline and each successful delta, the committed watermark is moved to `observedMaxLastModified - deltaLookback`, but never backward during delta advancement. This intentionally repeats recent objects so a later inventory can still catch objects whose `LastModifiedDate` is older than the newest row in an earlier report but was missing from that earlier report.
 
 ## Target Client-Side Encryption
 
@@ -183,7 +186,7 @@ nohup env \
 ```
 
 Optional script variables include `STATE_PATH`, `FAILED_LOG_PATH`, `TEMP_DIR`, `CONCURRENCY`,
-`QUEUE_SIZE`, `DRY_RUN`, `DRY_RUN_SAMPLE_SIZE`, and `EXTRA_JAVA_OPTS`.
+`QUEUE_SIZE`, `DRY_RUN`, `DRY_RUN_SAMPLE_SIZE`, `DELTA_LOOKBACK`, and `EXTRA_JAVA_OPTS`.
 
 ## Delta
 
@@ -205,7 +208,7 @@ java -jar target/s3-migration-v2-0.1.0-SNAPSHOT.jar \
   --migration.decrypt.legacy-kms.kms-key-id=arn:aws:kms:us-east-1:111122223333:key/your-key-id
 ```
 
-Delta processes rows where `LastModifiedDate >= deltaWatermark`. The committed `deltaWatermark` advances only after the whole manifest is scanned successfully.
+Delta processes rows where `LastModifiedDate >= deltaWatermark`. The committed `deltaWatermark` advances only after the whole manifest is scanned successfully, and advancement keeps the configured `delta-lookback` window.
 
 ## Retry
 

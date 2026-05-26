@@ -33,6 +33,7 @@ Optional environment variables:
   QUEUE_SIZE           Default: 64
   DRY_RUN              Default: false
   DRY_RUN_SAMPLE_SIZE  Default: 100
+  DELTA_LOOKBACK       Default: 48h
   TARGET_CLIENT_SIDE_KMS_KEY_ID
                        Enables target client-side KMS upload with this key ARN
   EXTRA_JAVA_OPTS      Extra JVM flags, for example "-Xms4g -Xmx4g"
@@ -101,6 +102,7 @@ CONCURRENCY="${CONCURRENCY:-8}"
 QUEUE_SIZE="${QUEUE_SIZE:-64}"
 DRY_RUN="${DRY_RUN:-false}"
 DRY_RUN_SAMPLE_SIZE="${DRY_RUN_SAMPLE_SIZE:-100}"
+DELTA_LOOKBACK="${DELTA_LOOKBACK:-48h}"
 
 if [[ ! -f "$JAR_PATH" ]]; then
     fail "JAR_PATH does not exist: $JAR_PATH"
@@ -122,6 +124,7 @@ echo "  concurrency=$CONCURRENCY"
 echo "  queueSize=$QUEUE_SIZE"
 echo "  dryRun=$DRY_RUN"
 echo "  dryRunSampleSize=$DRY_RUN_SAMPLE_SIZE"
+echo "  deltaLookback=$DELTA_LOOKBACK"
 echo "  legacyKmsEnabled=true"
 echo "  sourceKmsKeyId=$SOURCE_KMS_KEY_ID"
 echo "  jarPath=$JAR_PATH"
@@ -141,6 +144,7 @@ args=(
     "--migration.worker.queue-size=$QUEUE_SIZE"
     "--migration.upload.dry-run=$DRY_RUN"
     "--migration.upload.dry-run-sample-size=$DRY_RUN_SAMPLE_SIZE"
+    "--migration.job.delta-lookback=$DELTA_LOOKBACK"
     "--migration.decrypt.legacy-kms.enabled=true"
     "--migration.decrypt.legacy-kms.kms-key-id=$SOURCE_KMS_KEY_ID"
 )

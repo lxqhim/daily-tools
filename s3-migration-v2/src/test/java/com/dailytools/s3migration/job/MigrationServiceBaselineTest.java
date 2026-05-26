@@ -96,9 +96,9 @@ class MigrationServiceBaselineTest {
                 .isEqualTo(Instant.parse("2026-05-17T00:00:00Z"));
         assertThat(completedState.getBaselineObservedMaxLastModified())
                 .isEqualTo(Instant.parse("2026-05-20T00:00:00Z"));
-        assertThat(completedState.getDeltaWatermark()).isEqualTo(Instant.parse("2026-05-20T00:00:00Z"));
+        assertThat(completedState.getDeltaWatermark()).isEqualTo(Instant.parse("2026-05-18T00:00:00Z"));
         assertThat(completedState.getDeltaCandidateWatermark())
-                .isEqualTo(Instant.parse("2026-05-20T00:00:00Z"));
+                .isEqualTo(Instant.parse("2026-05-18T00:00:00Z"));
         assertThat(completedState.getLastErrorCode()).isNull();
     }
 

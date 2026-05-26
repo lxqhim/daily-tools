@@ -10,6 +10,8 @@ public class ProcessingSummary {
     private long failed;
     private long skipped;
     private long retried;
+    private long scannedRows;
+    private long submittedRows;
     private Instant maxLastModified;
 
     public void add(ObjectProcessResult result) {
@@ -28,10 +30,20 @@ public class ProcessingSummary {
         failed += other.failed;
         skipped += other.skipped;
         retried += other.retried;
+        scannedRows += other.scannedRows;
+        submittedRows += other.submittedRows;
         if (other.maxLastModified != null
                 && (maxLastModified == null || other.maxLastModified.isAfter(maxLastModified))) {
             maxLastModified = other.maxLastModified;
         }
+    }
+
+    public void scanned() {
+        scannedRows++;
+    }
+
+    public void submitted() {
+        submittedRows++;
     }
 
     public void skipped() {
@@ -60,8 +72,22 @@ public class ProcessingSummary {
         return new ProcessingCounters(success, dryRunSuccess, failed, skipped, retried);
     }
 
+    public long scannedRows() {
+        return scannedRows;
+    }
+
+    public long submittedRows() {
+        return submittedRows;
+    }
+
     @Override
     public String toString() {
-        return counters().toString();
+        return "ProcessingSummary[counters="
+                + counters()
+                + ", scannedRows="
+                + scannedRows
+                + ", submittedRows="
+                + submittedRows
+                + "]";
     }
 }
