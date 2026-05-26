@@ -165,6 +165,26 @@ java -jar target/s3-migration-v2-0.1.0-SNAPSHOT.jar \
 
 Baseline scans the whole manifest for this shard. It does not skip old objects by last modified date.
 
+For long-running Linux servers, prefer the wrapper script instead of hand-writing a long `nohup java ...`
+command. The script validates required settings, prints the effective shard/decryptor settings at startup, and
+keeps the `nohup` command short:
+
+```bash
+nohup env \
+  MODE=baseline \
+  REGION=us-east-1 \
+  SOURCE_BUCKET=my-source-bucket \
+  TARGET_BUCKET=my-target-bucket \
+  MANIFEST_URI=s3://my-inventory-bucket/source/config/2026-04-20T00-00Z/manifest.json \
+  SHARD_TOTAL=8 \
+  SHARD_INDEX=0 \
+  SOURCE_KMS_KEY_ID=arn:aws:kms:us-east-1:111122223333:key/your-key-id \
+  ./scripts/run-migration.sh > migration-shard-0.log 2>&1 &
+```
+
+Optional script variables include `STATE_PATH`, `FAILED_LOG_PATH`, `TEMP_DIR`, `CONCURRENCY`,
+`QUEUE_SIZE`, `DRY_RUN`, `DRY_RUN_SAMPLE_SIZE`, and `EXTRA_JAVA_OPTS`.
+
 ## Delta
 
 Delta is allowed only after the local `state.json` baseline status is `COMPLETED` or `COMPLETED_WITH_FAILURES`.
