@@ -16,6 +16,7 @@ import com.dailytools.s3migration.state.BaselineStatus;
 import com.dailytools.s3migration.state.MigrationState;
 import com.dailytools.s3migration.state.StateStore;
 import java.io.InputStream;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -87,6 +88,7 @@ public class MigrationService {
     }
 
     private void runBaselineUploadDryRun() throws Exception {
+        Instant startedAt = Instant.now();
         String runId = runId();
         S3Uri manifestUri = S3Uri.parse(properties.getInventory().getManifestUri());
         DryRunSampleLimiter sampleLimiter = dryRunSampleLimiter();
@@ -111,7 +113,7 @@ public class MigrationService {
                 false,
                 sampleLimiter);
         log.info(
-                "Completed baseline upload dry-run runId={} dryRun=true shard={}/{} summary={} scannedRows={} submittedRows={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                "Completed baseline upload dry-run runId={} dryRun=true shard={}/{} summary={} scannedRows={} submittedRows={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} elapsedSeconds={} stateWritten=false",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
@@ -120,10 +122,12 @@ public class MigrationService {
                 total.submittedRows(),
                 sampleLimiter.submitted(),
                 sampleLimiter.limit(),
-                sampleLimiter.reached());
+                sampleLimiter.reached(),
+                elapsedSeconds(startedAt));
     }
 
     private void runDeltaUploadDryRun() throws Exception {
+        Instant startedAt = Instant.now();
         MigrationState existingState = stateStore.load(properties.getPaths().getState(), properties);
         if (!existingState.getBaselineStatus().allowsDelta()) {
             throw new IllegalStateException("Delta requires baseline status COMPLETED or COMPLETED_WITH_FAILURES");
@@ -158,7 +162,7 @@ public class MigrationService {
                 false,
                 sampleLimiter);
         log.info(
-                "Completed delta upload dry-run runId={} dryRun=true shard={}/{} summary={} scannedRows={} submittedRows={} candidateWatermark={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                "Completed delta upload dry-run runId={} dryRun=true shard={}/{} summary={} scannedRows={} submittedRows={} candidateWatermark={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} elapsedSeconds={} stateWritten=false",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
@@ -168,10 +172,12 @@ public class MigrationService {
                 watermarkPolicy.advanceAfterDelta(previousWatermark, total),
                 sampleLimiter.submitted(),
                 sampleLimiter.limit(),
-                sampleLimiter.reached());
+                sampleLimiter.reached(),
+                elapsedSeconds(startedAt));
     }
 
     private void runRetryUploadDryRun() throws Exception {
+        Instant startedAt = Instant.now();
         String runId = runId();
         DryRunSampleLimiter sampleLimiter = dryRunSampleLimiter();
         log.info(
@@ -207,17 +213,19 @@ public class MigrationService {
                     sampleLimiter.limit());
         }
         log.info(
-                "Completed retry upload dry-run runId={} dryRun=true shard={}/{} summary={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} stateWritten=false",
+                "Completed retry upload dry-run runId={} dryRun=true shard={}/{} summary={} sampledObjects={} dryRunSampleSize={} sampleLimitReached={} elapsedSeconds={} stateWritten=false",
                 runId,
                 properties.getShard().getIndex(),
                 properties.getShard().getTotal(),
                 summary.counters(),
                 sampleLimiter.submitted(),
                 sampleLimiter.limit(),
-                sampleLimiter.reached());
+                sampleLimiter.reached(),
+                elapsedSeconds(startedAt));
     }
 
     private void runBaseline() throws Exception {
+        Instant startedAt = Instant.now();
         MigrationState state = stateStore.loadOrCreate(properties.getPaths().getState(), properties);
         if (state.getBaselineStatus() == BaselineStatus.COMPLETED
                 || state.getBaselineStatus() == BaselineStatus.COMPLETED_WITH_FAILURES) {
@@ -264,14 +272,15 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed baseline runId={} dryRun=false status={} shard={}/{} counters={} scannedRows={} submittedRows={}",
+                    "Completed baseline runId={} dryRun=false status={} shard={}/{} counters={} scannedRows={} submittedRows={} elapsedSeconds={}",
                     runId,
                     state.getBaselineStatus(),
                     properties.getShard().getIndex(),
                     properties.getShard().getTotal(),
                     state.getCounters(),
                     total.scannedRows(),
-                    total.submittedRows());
+                    total.submittedRows(),
+                    elapsedSeconds(startedAt));
         } catch (Exception exception) {
             state.setBaselineStatus(BaselineStatus.ABORTED);
             recordRunFailure(state, "BASELINE_ABORTED", exception);
@@ -283,6 +292,7 @@ public class MigrationService {
     }
 
     private void runDelta() throws Exception {
+        Instant startedAt = Instant.now();
         MigrationState state = stateStore.loadOrCreate(properties.getPaths().getState(), properties);
         if (!state.getBaselineStatus().allowsDelta()) {
             throw new IllegalStateException("Delta requires baseline status COMPLETED or COMPLETED_WITH_FAILURES");
@@ -335,7 +345,7 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed delta runId={} dryRun=false shard={}/{} previousWatermark={} newWatermark={} counters={} scannedRows={} submittedRows={}",
+                    "Completed delta runId={} dryRun=false shard={}/{} previousWatermark={} newWatermark={} counters={} scannedRows={} submittedRows={} elapsedSeconds={}",
                     runId,
                     properties.getShard().getIndex(),
                     properties.getShard().getTotal(),
@@ -343,7 +353,8 @@ public class MigrationService {
                     state.getDeltaWatermark(),
                     state.getCounters(),
                     total.scannedRows(),
-                    total.submittedRows());
+                    total.submittedRows(),
+                    elapsedSeconds(startedAt));
         } catch (Exception exception) {
             recordRunFailure(state, "DELTA_ABORTED", exception);
             state.setLastCheckpointAt(Instant.now());
@@ -354,6 +365,7 @@ public class MigrationService {
     }
 
     private void runRetry() throws Exception {
+        Instant startedAt = Instant.now();
         MigrationState state = stateStore.loadOrCreate(properties.getPaths().getState(), properties);
         String runId = runId();
         log.info(
@@ -384,12 +396,13 @@ public class MigrationService {
             state.setLastCheckpointAt(Instant.now());
             stateStore.write(properties.getPaths().getState(), state);
             log.info(
-                    "Completed retry runId={} dryRun=false shard={}/{} summary={} counters={}",
+                    "Completed retry runId={} dryRun=false shard={}/{} summary={} counters={} elapsedSeconds={}",
                     runId,
                     properties.getShard().getIndex(),
                     properties.getShard().getTotal(),
                     summary.counters(),
-                    state.getCounters());
+                    state.getCounters(),
+                    elapsedSeconds(startedAt));
         } catch (Exception exception) {
             recordRunFailure(state, "RETRY_ABORTED", exception);
             state.setLastCheckpointAt(Instant.now());
@@ -724,6 +737,10 @@ public class MigrationService {
     private static void submit(
             ExecutorCompletionService<ObjectProcessResult> completionService, Callable<ObjectProcessResult> callable) {
         completionService.submit(callable);
+    }
+
+    private static long elapsedSeconds(Instant startedAt) {
+        return Duration.between(startedAt, Instant.now()).toSeconds();
     }
 
     private void checkpointObservedWatermark(
