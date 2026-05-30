@@ -1,5 +1,7 @@
 /.idea/**
 /.claude/**
+.DS_Store
+**/.DS_Store
 /base64/web/.next/**
 /base64/web/node_modules/**
 /base64/web/tsconfig.tsbuildinfo
