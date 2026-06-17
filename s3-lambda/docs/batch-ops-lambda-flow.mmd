@@ -1,0 +1,47 @@
+flowchart TB
+    U["迁移操作人员<br/>选择时间窗口与 prefixes"]
+
+    subgraph S["源账号 - Region A"]
+        direction LR
+        SB["开启 Versioning 的源 bucket<br/>旧版客户端加密对象"]
+        MG["S3 Batch Operations<br/>Manifest Generator"]
+        MF["生成的 Manifest<br/>bucket / key / optional version ID"]
+        BO["S3 Batch Operations Job<br/>Invoke Lambda"]
+        RP["Completion Report<br/>AllTasks 成功与失败明细"]
+    end
+
+    subgraph P["处理层 - Region A"]
+        direction LR
+        L["Java Lambda<br/>每个 Batch task 返回一个结果"]
+        SK["源 KMS key<br/>解密 data key"]
+        TMP["Lambda /tmp<br/>解密后的本地文件"]
+    end
+
+    subgraph T["目标账号 - Region B"]
+        direction LR
+        TB["目标 bucket<br/>保留原 key 或增加 prefix"]
+        SSE["Bucket 默认静态加密<br/>SSE-S3 或 SSE-KMS"]
+    end
+
+    U -->|"CreateJob: CreatedAfter / CreatedBefore<br/>+ MatchAnyPrefix"| MG
+    SB -->|"评估对象 metadata"| MG
+    MG -->|"按需生成"| MF
+    MF -->|"定义 task 范围"| BO
+    BO -->|"逐对象调用"| L
+    SB -->|"GetObject / GetObjectVersion"| L
+    L -->|"kms:Decrypt"| SK
+    SK --> L
+    L -->|"写入解密数据"| TMP
+    TMP -->|"PutObject - 产生跨 Region 流量费用"| TB
+    TB --> SSE
+    L -->|"Succeeded / TemporaryFailure / PermanentFailure"| BO
+    BO -->|"Job 结束、失败或取消后写入"| RP
+
+    classDef source fill:#e8f1fb,stroke:#2563a6,color:#102a43,stroke-width:1.5px;
+    classDef process fill:#fff4d6,stroke:#b7791f,color:#4a2c00,stroke-width:1.5px;
+    classDef target fill:#e7f6ec,stroke:#2f855a,color:#173b2b,stroke-width:1.5px;
+    classDef evidence fill:#f2eafa,stroke:#7b3fa1,color:#32144a,stroke-width:1.5px;
+    class SB,MG,MF,BO source;
+    class L,SK,TMP process;
+    class TB,SSE target;
+    class RP evidence;
