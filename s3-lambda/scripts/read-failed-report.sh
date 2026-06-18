@@ -107,48 +107,9 @@ case "$report_manifest" in
     ;;
 esac
 
-command -v aws >/dev/null 2>&1 || { echo "aws CLI is required" >&2; exit 127; }
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 127; }
 
-tmp_root="${TMPDIR:-/tmp}"
-tmp_dir="$(mktemp -d "${tmp_root%/}/s3-batch-report.XXXXXX")"
-cleanup() {
-  if [[ "$keep_temp" == true ]]; then
-    echo "Kept temp directory: $tmp_dir" >&2
-  else
-    rm -rf "$tmp_dir"
-  fi
-}
-trap cleanup EXIT
-
-manifest_json="${tmp_dir}/manifest.json"
-aws s3 cp "$report_manifest" "$manifest_json" >/dev/null
-
-failed_list="${tmp_dir}/failed-files.tsv"
-python3 "$python_script" --list-failed-files "$manifest_json" > "$failed_list"
-
-failed_csv_args=()
-index=0
-while IFS=$'\t' read -r bucket key; do
-  [[ -n "${bucket}${key}" ]] || continue
-  index=$((index + 1))
-  local_csv="${tmp_dir}/failed-${index}.csv"
-  aws s3 cp "s3://${bucket}/${key}" "$local_csv" >/dev/null
-  failed_csv_args+=(--failed-csv "$local_csv")
-done < "$failed_list"
-
-if [[ ${#failed_csv_args[@]} -eq 0 ]]; then
-  echo "0 failed rows" >&2
-  if [[ -n "$output_file" ]]; then
-    : > "$output_file"
-  fi
-  if [[ -n "$retry_manifest" ]]; then
-    : > "$retry_manifest"
-  fi
-  exit 0
-fi
-
-python_args=(--manifest-json "$manifest_json" "${failed_csv_args[@]}")
+python_args=(--report-manifest-s3 "$report_manifest")
 if [[ "$summary" == true ]]; then
   python_args+=(--summary)
 fi
@@ -163,6 +124,9 @@ if [[ -n "$retry_manifest" ]]; then
 fi
 if [[ "$omit_version_id" == true ]]; then
   python_args+=(--omit-version-id)
+fi
+if [[ "$keep_temp" == true ]]; then
+  python_args+=(--keep-temp)
 fi
 
 python3 "$python_script" "${python_args[@]}"

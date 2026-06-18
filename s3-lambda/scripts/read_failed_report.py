@@ -3,6 +3,8 @@ import argparse
 import csv
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -43,11 +45,21 @@ def failed_report_locations(manifest):
         if status != "failed":
             continue
         bucket = str(result.get("Bucket", "")).strip()
-        key = str(result.get("Key", "")).strip()
+        key = str(result.get("Key", ""))
         if not bucket or not key:
             raise ValueError("Failed report entry must include Bucket and Key")
         locations.append((bucket, key))
     return locations
+
+
+def s3_uri(bucket, key):
+    return f"s3://{bucket}/{key}"
+
+
+def download_s3_uri(uri, destination):
+    if shutil.which("aws") is None:
+        raise RuntimeError("aws CLI is required")
+    subprocess.run(["aws", "s3", "cp", uri, str(destination)], check=True, stdout=subprocess.DEVNULL)
 
 
 def normalize_report_row(row, source):
@@ -140,31 +152,58 @@ def command_list_failed_files(args):
     return 0
 
 
+def downloaded_failed_csv_paths(report_manifest_s3, keep_temp=False):
+    temp_path = Path(tempfile.mkdtemp(prefix="s3-batch-report."))
+    manifest_path = temp_path / "manifest.json"
+    download_s3_uri(report_manifest_s3, manifest_path)
+    manifest = load_manifest(manifest_path)
+    paths = []
+    for index, (bucket, key) in enumerate(failed_report_locations(manifest), start=1):
+        local_csv = temp_path / f"failed-{index}.csv"
+        download_s3_uri(s3_uri(bucket, key), local_csv)
+        paths.append(str(local_csv))
+    if keep_temp:
+        print(f"Kept temp directory: {temp_path}", file=sys.stderr)
+    return temp_path, paths
+
+
 def command_read(args):
-    rows = read_failed_rows(args.failed_csv)
+    temp_path = None
+    failed_csv = list(args.failed_csv)
+    if args.report_manifest_s3:
+        temp_path, downloaded_paths = downloaded_failed_csv_paths(args.report_manifest_s3, keep_temp=args.keep_temp)
+        failed_csv.extend(downloaded_paths)
+    try:
+        rows = read_failed_rows(failed_csv)
 
-    if args.retry_manifest:
-        with open(args.retry_manifest, "w", encoding="utf-8", newline="") as handle:
-            write_retry_manifest(rows, handle, omit_version_id=args.omit_version_id)
-        print(f"Wrote retry manifest: {args.retry_manifest} ({len(rows)} rows)", file=sys.stderr)
+        if not rows:
+            print("0 failed rows", file=sys.stderr)
 
-    if args.summary:
-        output, should_close = open_output(args.output)
-        try:
-            for line in summary_lines(rows):
-                print(line, file=output)
-        finally:
-            if should_close:
-                output.close()
-    elif not args.retry_manifest or args.output:
-        output, should_close = open_output(args.output)
-        try:
-            write_failed_rows(rows, output, with_header=args.with_header)
-        finally:
-            if should_close:
-                output.close()
+        if args.retry_manifest:
+            with open(args.retry_manifest, "w", encoding="utf-8", newline="") as handle:
+                write_retry_manifest(rows, handle, omit_version_id=args.omit_version_id)
+            print(f"Wrote retry manifest: {args.retry_manifest} ({len(rows)} rows)", file=sys.stderr)
 
-    return 0
+        if args.summary:
+            output, should_close = open_output(args.output)
+            try:
+                for line in summary_lines(rows):
+                    print(line, file=output)
+            finally:
+                if should_close:
+                    output.close()
+        elif not args.retry_manifest or args.output:
+            output, should_close = open_output(args.output)
+            try:
+                write_failed_rows(rows, output, with_header=args.with_header)
+            finally:
+                if should_close:
+                    output.close()
+
+        return 0
+    finally:
+        if temp_path is not None and not args.keep_temp:
+            shutil.rmtree(temp_path, ignore_errors=True)
 
 
 class ReadFailedReportTests(unittest.TestCase):
@@ -227,6 +266,21 @@ class ReadFailedReportTests(unittest.TestCase):
         }
         self.assertEqual([("r", "failed.csv")], failed_report_locations(manifest))
 
+    def test_failed_location_preserves_key_whitespace_and_control_characters(self):
+        manifest = {
+            "Results": [
+                {
+                    "TaskExecutionStatus": "failed",
+                    "Bucket": "r",
+                    "Key": "reports/job/results/64ff\tpart\nwith-space .csv",
+                }
+            ]
+        }
+        self.assertEqual(
+            [("r", "reports/job/results/64ff\tpart\nwith-space .csv")],
+            failed_report_locations(manifest),
+        )
+
 
 def run_self_tests():
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(ReadFailedReportTests)
@@ -242,12 +296,14 @@ def build_parser():
             """\
             Examples:
               read_failed_report.py --list-failed-files manifest.json
+              read_failed_report.py --report-manifest-s3 s3://bucket/reports/job/manifest.json --summary
               read_failed_report.py --failed-csv failed.csv --summary
               read_failed_report.py --failed-csv failed.csv --retry-manifest retry.csv
             """
         ),
     )
     parser.add_argument("--manifest-json", help="Downloaded top-level completion report manifest.json")
+    parser.add_argument("--report-manifest-s3", help="Top-level completion report manifest.json S3 URI")
     parser.add_argument("--list-failed-files", help="Print failed report Bucket and Key pairs as TSV")
     parser.add_argument("--failed-csv", action="append", default=[], help="Downloaded failed report CSV file")
     parser.add_argument("--output", help="Output file for full failed rows or summary; use '-' for stdout")
@@ -255,6 +311,7 @@ def build_parser():
     parser.add_argument("--retry-manifest", help="Write Batch Operations retry manifest CSV")
     parser.add_argument("--omit-version-id", action="store_true", help="Omit VersionId from retry manifest")
     parser.add_argument("--with-header", action="store_true", help="Include header when writing full failed rows")
+    parser.add_argument("--keep-temp", action="store_true", help="Keep downloaded report files for debugging")
     parser.add_argument("--self-test", action="store_true", help="Run parser self-tests")
     return parser
 
@@ -267,8 +324,11 @@ def main(argv=None):
         return run_self_tests()
     if args.list_failed_files:
         return command_list_failed_files(args)
-    if not args.failed_csv:
-        parser.error("at least one --failed-csv is required unless --list-failed-files or --self-test is used")
+    if not args.failed_csv and not args.report_manifest_s3:
+        parser.error(
+            "at least one --failed-csv or --report-manifest-s3 is required "
+            "unless --list-failed-files or --self-test is used"
+        )
     return command_read(args)
 
 
