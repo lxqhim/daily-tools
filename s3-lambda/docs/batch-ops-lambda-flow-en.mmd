@@ -1,0 +1,47 @@
+flowchart TB
+    U["Migration operator<br/>select time window and prefixes"]
+
+    subgraph S["Source account - Region A"]
+        direction LR
+        SB["Versioned source bucket<br/>legacy client-side encrypted objects"]
+        MG["S3 Batch Operations<br/>Manifest Generator"]
+        MF["Generated manifest<br/>bucket / key / optional version ID"]
+        BO["S3 Batch Operations job<br/>Invoke Lambda"]
+        RP["Completion report<br/>AllTasks success and failure details"]
+    end
+
+    subgraph P["Processing layer - Region A"]
+        direction LR
+        L["Java Lambda<br/>one result per Batch task"]
+        SK["Source KMS key<br/>decrypt data key"]
+        TMP["Lambda /tmp<br/>decrypted local file"]
+    end
+
+    subgraph T["Target account - Region B"]
+        direction LR
+        TB["Target bucket<br/>preserve key or add prefix"]
+        SSE["Bucket default encryption<br/>SSE-S3 or SSE-KMS"]
+    end
+
+    U -->|"CreateJob: CreatedAfter / CreatedBefore<br/>+ MatchAnyPrefix"| MG
+    SB -->|"Evaluate object metadata"| MG
+    MG -->|"Generate on demand"| MF
+    MF -->|"Define task scope"| BO
+    BO -->|"Invoke per object"| L
+    SB -->|"GetObject / GetObjectVersion"| L
+    L -->|"kms:Decrypt"| SK
+    SK --> L
+    L -->|"Write decrypted data"| TMP
+    TMP -->|"PutObject - cross-Region transfer charge"| TB
+    TB --> SSE
+    L -->|"Succeeded / TemporaryFailure / PermanentFailure"| BO
+    BO -->|"Write after completion, failure, or cancellation"| RP
+
+    classDef source fill:#e8f1fb,stroke:#2563a6,color:#102a43,stroke-width:1.5px;
+    classDef process fill:#fff4d6,stroke:#b7791f,color:#4a2c00,stroke-width:1.5px;
+    classDef target fill:#e7f6ec,stroke:#2f855a,color:#173b2b,stroke-width:1.5px;
+    classDef evidence fill:#f2eafa,stroke:#7b3fa1,color:#32144a,stroke-width:1.5px;
+    class SB,MG,MF,BO source;
+    class L,SK,TMP process;
+    class TB,SSE target;
+    class RP evidence;

@@ -101,6 +101,29 @@ com.dailytools.s3migration.batchlambda.S3BatchDecryptCopyHandler::handleRequest
 
 未返回的 task 默认按 `TemporaryFailure` 处理。
 
+#### 5.3.1 什么是 `TemporaryFailure`
+
+> **`TemporaryFailure` 表示当前 task 可以由 S3 Batch Operations 在本次 job 结束前再次执行。它不是最终失败状态，也不需要操作人员立即创建 retry job。**
+
+当前 Java 实现沿 exception cause chain 检查异常。符合以下任一条件时返回 `TemporaryFailure`：
+
+| 当前实现的判定条件 | 常见示例 |
+| --- | --- |
+| `SdkClientException` | AWS SDK 网络连接中断、客户端超时 |
+| `IOException` | 下载、解密文件写入或上传文件读取时的 I/O 错误 |
+| AWS HTTP status `429` | 请求被限流 |
+| AWS HTTP status `500`、`502`、`503`、`504` | S3、KMS 或相关服务的临时服务端错误 |
+| AWS error code 包含 `throttl` | KMS/S3 throttling |
+| AWS error code 包含 `slowdown` | S3 `SlowDown` |
+| AWS error code 包含 `timeout` | AWS service timeout |
+| AWS error code 包含 `requestlimit` | 请求速率超过限制 |
+| AWS error code 包含 `provisionedthroughput` | KMS 等服务的吞吐限制 |
+| Lambda response 缺少某个输入 `taskId` | `treatMissingKeysAs` 默认为 `TemporaryFailure` |
+
+S3 Batch Operations 会在当前 job 内 redrive 该 task。若后续执行成功，最终报告为成功；若最后一次 redrive 仍失败，completion report 才会将其列为最终失败对象。AWS 不提供由调用方设置的固定 redrive 次数。
+
+`AccessDenied`、无效参数、错误的 KMS/crypto 配置以及不受支持的对象格式通常应视为 `PermanentFailure`，因为不修改配置就无法通过重试恢复。Lambda 整体 timeout 发生在 handler 返回结果之前，不经过上述 Java 分类逻辑。
+
 ### 5.4 源 bucket 与源 KMS
 
 - Lambda execution role 需要 `s3:GetObject` 和 `s3:GetObjectVersion`。
@@ -173,7 +196,7 @@ Completion report 证明 task 是否按照 Lambda 返回值完成，但不计算
 
 ## 8. 失败处理与恢复
 
-- 网络、I/O、S3/KMS throttling 和常见 5xx 返回 `TemporaryFailure`，由 Batch Operations redrive。
+- 网络、I/O、S3/KMS throttling 和常见 5xx 按第 5.3.1 节标记为 `TemporaryFailure`，由 Batch Operations 在当前 job 内 redrive。
 - 权限、配置、无法识别的加密格式等通常成为 `PermanentFailure`，进入 completion report。
 - 当 job 至少执行 1,000 个 task 后，如果 task failure rate 超过 50%，S3 Batch Operations 会使 job 失败。正式大规模运行前必须先执行小范围 pilot job。
 - Task 可能因 redrive 而重复执行。目标 bucket 开启 versioning 时，重复上传同一 key 会产生额外版本，而不是破坏旧版本。
