@@ -19,7 +19,7 @@ Options:
   -h, --help                Show this help.
 
 Notes:
-  - Requires aws CLI and python3.
+  - Requires python3 and boto3 for s3:// completion reports.
   - The input is the top-level completion report manifest.json, not a result CSV.
   - Failed result CSV rows are parsed with Python csv.reader; commas and quotes in
     ResultMessage are safe.

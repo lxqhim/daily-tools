@@ -4,14 +4,13 @@ import csv
 import io
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
 from collections import Counter
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 
 REPORT_FIELDS = [
@@ -52,14 +51,21 @@ def failed_report_locations(manifest):
     return locations
 
 
-def s3_uri(bucket, key):
-    return f"s3://{bucket}/{key}"
+def parse_s3_uri(uri):
+    parsed = urlparse(uri)
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path:
+        raise ValueError(f"Expected s3://bucket/key URI, got: {uri}")
+    return parsed.netloc, parsed.path.lstrip("/")
 
 
-def download_s3_uri(uri, destination):
-    if shutil.which("aws") is None:
-        raise RuntimeError("aws CLI is required")
-    subprocess.run(["aws", "s3", "cp", uri, str(destination)], check=True, stdout=subprocess.DEVNULL)
+def create_s3_client():
+    try:
+        import boto3
+    except ImportError as exception:
+        raise RuntimeError(
+            "boto3 is required for --report-manifest-s3. Install it with: python3 -m pip install boto3"
+        ) from exception
+    return boto3.client("s3")
 
 
 def normalize_report_row(row, source):
@@ -152,19 +158,28 @@ def command_list_failed_files(args):
     return 0
 
 
-def downloaded_failed_csv_paths(report_manifest_s3, keep_temp=False):
+def downloaded_failed_csv_paths_from_s3_client(report_manifest_s3, s3_client, keep_temp=False):
     temp_path = Path(tempfile.mkdtemp(prefix="s3-batch-report."))
     manifest_path = temp_path / "manifest.json"
-    download_s3_uri(report_manifest_s3, manifest_path)
+    manifest_bucket, manifest_key = parse_s3_uri(report_manifest_s3)
+    s3_client.download_file(manifest_bucket, manifest_key, str(manifest_path))
     manifest = load_manifest(manifest_path)
     paths = []
     for index, (bucket, key) in enumerate(failed_report_locations(manifest), start=1):
         local_csv = temp_path / f"failed-{index}.csv"
-        download_s3_uri(s3_uri(bucket, key), local_csv)
+        s3_client.download_file(bucket, key, str(local_csv))
         paths.append(str(local_csv))
     if keep_temp:
         print(f"Kept temp directory: {temp_path}", file=sys.stderr)
     return temp_path, paths
+
+
+def downloaded_failed_csv_paths(report_manifest_s3, keep_temp=False):
+    return downloaded_failed_csv_paths_from_s3_client(
+        report_manifest_s3,
+        create_s3_client(),
+        keep_temp=keep_temp,
+    )
 
 
 def command_read(args):
@@ -173,6 +188,14 @@ def command_read(args):
     if args.report_manifest_s3:
         temp_path, downloaded_paths = downloaded_failed_csv_paths(args.report_manifest_s3, keep_temp=args.keep_temp)
         failed_csv.extend(downloaded_paths)
+    if args.manifest_json:
+        manifest = load_manifest(args.manifest_json)
+        locations = failed_report_locations(manifest)
+        if locations:
+            raise ValueError(
+                "--manifest-json only reads a local top-level manifest. Use --report-manifest-s3 "
+                "to download failed CSV files from S3, or pass local failed report CSVs with --failed-csv."
+            )
     try:
         rows = read_failed_rows(failed_csv)
 
@@ -281,6 +304,54 @@ class ReadFailedReportTests(unittest.TestCase):
             failed_report_locations(manifest),
         )
 
+    def test_downloads_manifest_and_failed_csv_with_boto3_style_client(self):
+        class FakeS3Client:
+            def __init__(self):
+                self.calls = []
+
+            def download_file(self, bucket, key, filename):
+                self.calls.append((bucket, key))
+                path = Path(filename)
+                if key == "reports/job/manifest.json":
+                    path.write_text(
+                        json.dumps(
+                            {
+                                "Results": [
+                                    {
+                                        "TaskExecutionStatus": "failed",
+                                        "Bucket": "report-bucket",
+                                        "Key": "reports/job/results/64ff\tpart\nwith,comma.csv",
+                                    }
+                                ]
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                else:
+                    path.write_text(
+                        'source-bucket,"key,with,comma.txt",v1,failed,TemporaryFailure,200,"retry, please"\n',
+                        encoding="utf-8",
+                    )
+
+        fake = FakeS3Client()
+        temp_path, paths = downloaded_failed_csv_paths_from_s3_client(
+            "s3://report-bucket/reports/job/manifest.json",
+            fake,
+        )
+        try:
+            self.assertEqual(
+                [
+                    ("report-bucket", "reports/job/manifest.json"),
+                    ("report-bucket", "reports/job/results/64ff\tpart\nwith,comma.csv"),
+                ],
+                fake.calls,
+            )
+            rows = read_failed_rows(paths)
+            self.assertEqual("key,with,comma.txt", rows[0]["Key"])
+            self.assertEqual("TemporaryFailure", rows[0]["ErrorCode"])
+        finally:
+            shutil.rmtree(temp_path, ignore_errors=True)
+
 
 def run_self_tests():
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(ReadFailedReportTests)
@@ -302,7 +373,7 @@ def build_parser():
             """
         ),
     )
-    parser.add_argument("--manifest-json", help="Downloaded top-level completion report manifest.json")
+    parser.add_argument("--manifest-json", help="Local top-level completion report manifest.json")
     parser.add_argument("--report-manifest-s3", help="Top-level completion report manifest.json S3 URI")
     parser.add_argument("--list-failed-files", help="Print failed report Bucket and Key pairs as TSV")
     parser.add_argument("--failed-csv", action="append", default=[], help="Downloaded failed report CSV file")
@@ -333,4 +404,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exception:
+        print(f"ERROR: {exception}", file=sys.stderr)
+        sys.exit(1)
