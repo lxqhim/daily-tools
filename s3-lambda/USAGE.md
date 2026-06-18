@@ -90,6 +90,7 @@ TEMP_DIR=/tmp/s3-batch-decrypt
 CRYPTO_MODE=ENCRYPTION_ONLY
 CRYPTO_STORAGE_MODE=OBJECT_METADATA
 RESULT_STRING_MAX_LENGTH=1024
+COPY_METADATA_KEYS=
 ```
 
 Notes:
@@ -98,6 +99,38 @@ Notes:
 - `TARGET_BUCKET` is where decrypted objects are uploaded.
 - `TARGET_KEY_PREFIX` is optional. When empty, the original object key is preserved.
 - `CRYPTO_MODE=ENCRYPTION_ONLY` matches legacy AWS SDK v1 client-side encryption mode.
+- `COPY_METADATA_KEYS` is optional. When empty, no source object metadata is migrated.
+
+## Metadata Copy
+
+By default, the Lambda does not migrate source object metadata. To copy selected metadata without extra S3 API calls, set `COPY_METADATA_KEYS` to a comma-separated allowlist:
+
+```text
+COPY_METADATA_KEYS=content-type,cache-control,x-amz-meta-owner
+```
+
+The Lambda uses the `ObjectMetadata` returned by the existing source `GetObject` call. It does not call `HeadObject` or `GetObjectMetadata` for this feature.
+
+Supported system metadata keys:
+
+```text
+content-type
+content-encoding
+content-language
+cache-control
+content-disposition
+expires
+```
+
+User metadata can be listed either with or without the S3 header prefix:
+
+```text
+COPY_METADATA_KEYS=x-amz-meta-owner,department
+```
+
+Legacy client-side encryption instruction metadata is never copied, even if listed. Examples include `x-amz-key`, `x-amz-iv`, and `x-amz-matdesc`.
+
+This feature does not copy object tags, ACLs, ETag, LastModified, VersionId, storage class, or source SSE/KMS metadata.
 
 ## S3 Batch Operations
 

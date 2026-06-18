@@ -46,7 +46,10 @@ TEMP_DIR=/tmp/s3-batch-decrypt
 CRYPTO_MODE=ENCRYPTION_ONLY
 CRYPTO_STORAGE_MODE=OBJECT_METADATA
 RESULT_STRING_MAX_LENGTH=1024
+COPY_METADATA_KEYS=
 ```
+
+Set `COPY_METADATA_KEYS` only when selected source metadata should be migrated. Multiple keys use commas, for example `content-type,cache-control,x-amz-meta-owner`. When the value is empty, no metadata is migrated.
 
 ## IAM Notes
 

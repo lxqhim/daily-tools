@@ -1,9 +1,11 @@
 package com.dailytools.s3migration.batchlambda;
 
 import java.nio.file.Path;
-import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 final class BatchLambdaConfig {
 
@@ -19,6 +21,7 @@ final class BatchLambdaConfig {
     private final LegacyCryptoMode cryptoMode;
     private final LegacyCryptoStorageMode cryptoStorageMode;
     private final int resultStringMaxLength;
+    private final Set<String> copyMetadataKeys;
 
     private BatchLambdaConfig(
             String sourceRegion,
@@ -30,7 +33,8 @@ final class BatchLambdaConfig {
             Path tempDir,
             LegacyCryptoMode cryptoMode,
             LegacyCryptoStorageMode cryptoStorageMode,
-            int resultStringMaxLength) {
+            int resultStringMaxLength,
+            Set<String> copyMetadataKeys) {
         this.sourceRegion = sourceRegion;
         this.targetRegion = targetRegion;
         this.sourceKmsRegion = sourceKmsRegion;
@@ -41,6 +45,7 @@ final class BatchLambdaConfig {
         this.cryptoMode = cryptoMode;
         this.cryptoStorageMode = cryptoStorageMode;
         this.resultStringMaxLength = resultStringMaxLength;
+        this.copyMetadataKeys = copyMetadataKeys;
     }
 
     static BatchLambdaConfig fromEnvironment() {
@@ -61,6 +66,7 @@ final class BatchLambdaConfig {
         LegacyCryptoStorageMode cryptoStorageMode = LegacyCryptoStorageMode.from(
                 value(env, "CRYPTO_STORAGE_MODE", LegacyCryptoStorageMode.OBJECT_METADATA.name()));
         int resultStringMaxLength = parsePositiveInt(value(env, "RESULT_STRING_MAX_LENGTH", "1024"));
+        Set<String> copyMetadataKeys = parseMetadataKeys(env.get("COPY_METADATA_KEYS"));
         return new BatchLambdaConfig(
                 sourceRegion,
                 targetRegion,
@@ -71,7 +77,8 @@ final class BatchLambdaConfig {
                 tempDir,
                 cryptoMode,
                 cryptoStorageMode,
-                resultStringMaxLength);
+                resultStringMaxLength,
+                copyMetadataKeys);
     }
 
     String sourceRegion() {
@@ -114,6 +121,10 @@ final class BatchLambdaConfig {
         return resultStringMaxLength;
     }
 
+    Set<String> copyMetadataKeys() {
+        return copyMetadataKeys;
+    }
+
     private static String required(Map<String, String> env, String name) {
         String value = trimToEmpty(env.get(name));
         if (value.isBlank()) {
@@ -141,6 +152,24 @@ final class BatchLambdaConfig {
         } catch (NumberFormatException exception) {
             throw new IllegalArgumentException("RESULT_STRING_MAX_LENGTH must be an integer", exception);
         }
+    }
+
+    private static Set<String> parseMetadataKeys(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        Set<String> keys = new LinkedHashSet<>();
+        for (String item : value.split(",")) {
+            String key = normalizeMetadataKey(item);
+            if (!key.isBlank()) {
+                keys.add(key);
+            }
+        }
+        return Collections.unmodifiableSet(keys);
+    }
+
+    static String normalizeMetadataKey(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     enum LegacyCryptoMode {

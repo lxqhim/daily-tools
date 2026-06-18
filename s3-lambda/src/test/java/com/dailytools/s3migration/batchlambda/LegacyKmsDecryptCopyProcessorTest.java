@@ -3,18 +3,21 @@ package com.dailytools.s3migration.batchlambda;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Encryption;
+import com.amazonaws.services.s3.model.GetObjectMetadataRequest;
 import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Date;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -52,7 +55,51 @@ class LegacyKmsDecryptCopyProcessorTest {
         verify(targetClient).putObject(putCaptor.capture());
         assertThat(putCaptor.getValue().getBucketName()).isEqualTo("target-bucket");
         assertThat(putCaptor.getValue().getKey()).isEqualTo("copied/folder/a b+c.txt");
+        assertThat(putCaptor.getValue().getMetadata()).isNull();
         assertThat(putCaptor.getValue().getFile()).doesNotExist();
+    }
+
+    @Test
+    void copiesOnlyConfiguredMetadataFromGetObjectResultWithoutHeadRequest() throws Exception {
+        AmazonS3Encryption sourceClient = mock(AmazonS3Encryption.class);
+        AmazonS3 targetClient = mock(AmazonS3.class);
+        ObjectMetadata sourceMetadata = new ObjectMetadata();
+        sourceMetadata.setContentType("text/csv");
+        sourceMetadata.setCacheControl("max-age=60");
+        sourceMetadata.setContentEncoding("gzip");
+        sourceMetadata.setContentDisposition("attachment");
+        sourceMetadata.setContentLanguage("en-US");
+        sourceMetadata.setHttpExpiresDate(new Date(123456789L));
+        sourceMetadata.addUserMetadata("owner", "analytics");
+        sourceMetadata.addUserMetadata("x-amz-key", "legacy-envelope-key");
+        sourceMetadata.addUserMetadata("ignored", "do-not-copy");
+        when(sourceClient.getObject(any(GetObjectRequest.class), any(File.class))).thenAnswer(invocation -> {
+            File destination = invocation.getArgument(1);
+            Files.writeString(destination.toPath(), "plain-text");
+            return sourceMetadata;
+        });
+        BatchLambdaConfig config = config(Map.of(
+                "COPY_METADATA_KEYS", "content-type, cache-control, x-amz-meta-owner, x-amz-key"));
+        LegacyKmsDecryptCopyProcessor processor =
+                new LegacyKmsDecryptCopyProcessor(sourceClient, targetClient, config);
+
+        S3BatchTaskResult result =
+                processor.process(task("task-1", "arn:aws:s3:::source-bucket", "folder/file.csv", null));
+
+        assertThat(result.getResultCode()).isEqualTo("Succeeded");
+        verify(sourceClient, never()).getObjectMetadata(any(GetObjectMetadataRequest.class));
+        ArgumentCaptor<PutObjectRequest> putCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(targetClient).putObject(putCaptor.capture());
+        ObjectMetadata targetMetadata = putCaptor.getValue().getMetadata();
+        assertThat(targetMetadata).isNotNull();
+        assertThat(targetMetadata.getContentType()).isEqualTo("text/csv");
+        assertThat(targetMetadata.getCacheControl()).isEqualTo("max-age=60");
+        assertThat(targetMetadata.getContentEncoding()).isNull();
+        assertThat(targetMetadata.getContentDisposition()).isNull();
+        assertThat(targetMetadata.getContentLanguage()).isNull();
+        assertThat(targetMetadata.getHttpExpiresDate()).isNull();
+        assertThat(targetMetadata.getUserMetadata()).containsEntry("owner", "analytics");
+        assertThat(targetMetadata.getUserMetadata()).doesNotContainKeys("x-amz-key", "ignored");
     }
 
     @Test
