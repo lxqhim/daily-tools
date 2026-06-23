@@ -41,15 +41,19 @@ AWS_REGION=us-east-1
 SOURCE_REGION=us-east-1
 TARGET_REGION=us-east-1
 SOURCE_KMS_REGION=us-east-1
+TARGET_KMS_KEY_ID=
 TARGET_KEY_PREFIX=
 TEMP_DIR=/tmp/s3-batch-decrypt
 CRYPTO_MODE=ENCRYPTION_ONLY
 CRYPTO_STORAGE_MODE=OBJECT_METADATA
 RESULT_STRING_MAX_LENGTH=1024
 COPY_METADATA_KEYS=
+METADATA_COPY_DEBUG=false
 ```
 
+Set `TARGET_KMS_KEY_ID` only when the target bucket policy requires the request to include an explicit SSE-KMS key id. When empty, the target bucket default encryption is used. Prefer a KMS alias ARN if the target key may change.
 Set `COPY_METADATA_KEYS` only when selected source metadata should be migrated. Multiple keys use commas, for example `content-type,cache-control,x-amz-meta-owner`. When the value is empty, no metadata is migrated.
+Set `METADATA_COPY_DEBUG=true` only for small troubleshooting runs; it logs metadata key names, not metadata values.
 
 ## IAM Notes
 

@@ -85,21 +85,44 @@ AWS_REGION=us-east-1
 SOURCE_REGION=us-east-1
 TARGET_REGION=us-east-1
 SOURCE_KMS_REGION=us-east-1
+TARGET_KMS_KEY_ID=
 TARGET_KEY_PREFIX=
 TEMP_DIR=/tmp/s3-batch-decrypt
 CRYPTO_MODE=ENCRYPTION_ONLY
 CRYPTO_STORAGE_MODE=OBJECT_METADATA
 RESULT_STRING_MAX_LENGTH=1024
 COPY_METADATA_KEYS=
+METADATA_COPY_DEBUG=false
 ```
 
 Notes:
 
 - `SOURCE_KMS_KEY_ID` is for the source client-side encrypted objects.
 - `TARGET_BUCKET` is where decrypted objects are uploaded.
+- `TARGET_KMS_KEY_ID` is optional. Set it only when the target bucket policy requires an explicit SSE-KMS key id in the upload request. When empty, target bucket default encryption is used. Prefer a KMS alias ARN if the target key may change.
 - `TARGET_KEY_PREFIX` is optional. When empty, the original object key is preserved.
 - `CRYPTO_MODE=ENCRYPTION_ONLY` matches legacy AWS SDK v1 client-side encryption mode.
 - `COPY_METADATA_KEYS` is optional. When empty, no source object metadata is migrated.
+- `METADATA_COPY_DEBUG=true` prints metadata key-level diagnostics without printing metadata values.
+
+## Target SSE-KMS
+
+By default, uploads do not set target SSE headers. If the target bucket has default SSE-KMS, S3 encrypts the new object with the bucket default key after authorization succeeds.
+
+If the target bucket policy denies uploads unless the request includes `s3:x-amz-server-side-encryption-aws-kms-key-id`, set:
+
+```text
+TARGET_KMS_KEY_ID=arn:aws:kms:us-east-1:444455556666:alias/target-s3-key
+```
+
+When set, the Lambda sends explicit SSE-KMS headers on each target `PutObject`. The Lambda execution role also needs target key permissions:
+
+```text
+kms:GenerateDataKey
+kms:Encrypt
+```
+
+If the target key is in another account, the target KMS key policy must also allow the Lambda execution role. If you later point the bucket default encryption to a different key, update `TARGET_KMS_KEY_ID` or use a stable alias ARN.
 
 ## Metadata Copy
 
@@ -131,6 +154,14 @@ COPY_METADATA_KEYS=x-amz-meta-owner,department
 Legacy client-side encryption instruction metadata is never copied, even if listed. Examples include `x-amz-key`, `x-amz-iv`, and `x-amz-matdesc`.
 
 This feature does not copy object tags, ACLs, ETag, LastModified, VersionId, storage class, or source SSE/KMS metadata.
+
+For metadata troubleshooting on a small sample run, temporarily set:
+
+```text
+METADATA_COPY_DEBUG=true
+```
+
+CloudWatch will show one line per task with requested keys, source metadata keys, copied keys, skipped legacy encryption keys, and whether target metadata was attached. The log does not print metadata values.
 
 ## S3 Batch Operations
 
@@ -164,6 +195,13 @@ s3:PutObject
 kms:Decrypt
 ```
 
+If `TARGET_KMS_KEY_ID` is set, also allow the target KMS key:
+
+```text
+kms:GenerateDataKey
+kms:Encrypt
+```
+
 S3 Batch Operations role needs:
 
 ```text
@@ -193,6 +231,7 @@ export ACCOUNT_ID=111122223333
 export SOURCE_BUCKET=your-source-bucket
 export TARGET_BUCKET=your-target-bucket
 export SOURCE_KMS_KEY_ID=arn:aws:kms:us-east-1:111122223333:key/source-key-id
+export TARGET_KMS_KEY_ID=arn:aws:kms:us-east-1:444455556666:alias/target-s3-key
 
 export LAMBDA_ROLE_NAME=s3-batch-decrypt-copy-lambda-role
 export LAMBDA_ROLE_ARN=arn:aws:iam::${ACCOUNT_ID}:role/${LAMBDA_ROLE_NAME}
@@ -291,7 +330,7 @@ aws lambda create-function \
   --timeout 300 \
   --memory-size 2048 \
   --ephemeral-storage '{"Size":1024}' \
-  --environment "Variables={SOURCE_KMS_KEY_ID=${SOURCE_KMS_KEY_ID},TARGET_BUCKET=${TARGET_BUCKET},SOURCE_REGION=${AWS_REGION},TARGET_REGION=${AWS_REGION},SOURCE_KMS_REGION=${AWS_REGION},CRYPTO_MODE=ENCRYPTION_ONLY,CRYPTO_STORAGE_MODE=OBJECT_METADATA,TEMP_DIR=/tmp/s3-batch-decrypt}"
+  --environment "Variables={SOURCE_KMS_KEY_ID=${SOURCE_KMS_KEY_ID},TARGET_BUCKET=${TARGET_BUCKET},TARGET_KMS_KEY_ID=${TARGET_KMS_KEY_ID},SOURCE_REGION=${AWS_REGION},TARGET_REGION=${AWS_REGION},SOURCE_KMS_REGION=${AWS_REGION},CRYPTO_MODE=ENCRYPTION_ONLY,CRYPTO_STORAGE_MODE=OBJECT_METADATA,TEMP_DIR=/tmp/s3-batch-decrypt}"
 ```
 
 If the target bucket uses default SSE-KMS instead of SSE-S3, also allow the Lambda role to use the target KMS key for writes:
@@ -385,5 +424,5 @@ Update environment variables if needed:
 ```bash
 aws lambda update-function-configuration \
   --function-name "$LAMBDA_NAME" \
-  --environment "Variables={SOURCE_KMS_KEY_ID=${SOURCE_KMS_KEY_ID},TARGET_BUCKET=${TARGET_BUCKET},SOURCE_REGION=${AWS_REGION},TARGET_REGION=${AWS_REGION},SOURCE_KMS_REGION=${AWS_REGION},CRYPTO_MODE=ENCRYPTION_ONLY,CRYPTO_STORAGE_MODE=OBJECT_METADATA,TEMP_DIR=/tmp/s3-batch-decrypt}"
+  --environment "Variables={SOURCE_KMS_KEY_ID=${SOURCE_KMS_KEY_ID},TARGET_BUCKET=${TARGET_BUCKET},TARGET_KMS_KEY_ID=${TARGET_KMS_KEY_ID},SOURCE_REGION=${AWS_REGION},TARGET_REGION=${AWS_REGION},SOURCE_KMS_REGION=${AWS_REGION},CRYPTO_MODE=ENCRYPTION_ONLY,CRYPTO_STORAGE_MODE=OBJECT_METADATA,TEMP_DIR=/tmp/s3-batch-decrypt}"
 ```

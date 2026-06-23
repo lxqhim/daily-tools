@@ -56,7 +56,33 @@ class LegacyKmsDecryptCopyProcessorTest {
         assertThat(putCaptor.getValue().getBucketName()).isEqualTo("target-bucket");
         assertThat(putCaptor.getValue().getKey()).isEqualTo("copied/folder/a b+c.txt");
         assertThat(putCaptor.getValue().getMetadata()).isNull();
+        assertThat(putCaptor.getValue().getSSEAwsKeyManagementParams()).isNull();
         assertThat(putCaptor.getValue().getFile()).doesNotExist();
+    }
+
+    @Test
+    void appliesConfiguredTargetKmsKeyToUploadRequest() throws Exception {
+        AmazonS3Encryption sourceClient = mock(AmazonS3Encryption.class);
+        AmazonS3 targetClient = mock(AmazonS3.class);
+        when(sourceClient.getObject(any(GetObjectRequest.class), any(File.class))).thenAnswer(invocation -> {
+            File destination = invocation.getArgument(1);
+            Files.writeString(destination.toPath(), "plain-text");
+            return new ObjectMetadata();
+        });
+        BatchLambdaConfig config = config(Map.of(
+                "TARGET_KMS_KEY_ID", "arn:aws:kms:us-east-1:444455556666:alias/target-s3-key"));
+        LegacyKmsDecryptCopyProcessor processor =
+                new LegacyKmsDecryptCopyProcessor(sourceClient, targetClient, config);
+
+        S3BatchTaskResult result =
+                processor.process(task("task-1", "arn:aws:s3:::source-bucket", "folder/file.txt", null));
+
+        assertThat(result.getResultCode()).isEqualTo("Succeeded");
+        ArgumentCaptor<PutObjectRequest> putCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(targetClient).putObject(putCaptor.capture());
+        assertThat(putCaptor.getValue().getSSEAwsKeyManagementParams()).isNotNull();
+        assertThat(putCaptor.getValue().getSSEAwsKeyManagementParams().getAwsKmsKeyId())
+                .isEqualTo("arn:aws:kms:us-east-1:444455556666:alias/target-s3-key");
     }
 
     @Test

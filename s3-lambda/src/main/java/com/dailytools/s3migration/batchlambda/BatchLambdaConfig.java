@@ -16,12 +16,14 @@ final class BatchLambdaConfig {
     private final String sourceKmsRegion;
     private final String sourceKmsKeyId;
     private final String targetBucket;
+    private final String targetKmsKeyId;
     private final String targetKeyPrefix;
     private final Path tempDir;
     private final LegacyCryptoMode cryptoMode;
     private final LegacyCryptoStorageMode cryptoStorageMode;
     private final int resultStringMaxLength;
     private final Set<String> copyMetadataKeys;
+    private final boolean metadataCopyDebug;
 
     private BatchLambdaConfig(
             String sourceRegion,
@@ -29,23 +31,27 @@ final class BatchLambdaConfig {
             String sourceKmsRegion,
             String sourceKmsKeyId,
             String targetBucket,
+            String targetKmsKeyId,
             String targetKeyPrefix,
             Path tempDir,
             LegacyCryptoMode cryptoMode,
             LegacyCryptoStorageMode cryptoStorageMode,
             int resultStringMaxLength,
-            Set<String> copyMetadataKeys) {
+            Set<String> copyMetadataKeys,
+            boolean metadataCopyDebug) {
         this.sourceRegion = sourceRegion;
         this.targetRegion = targetRegion;
         this.sourceKmsRegion = sourceKmsRegion;
         this.sourceKmsKeyId = sourceKmsKeyId;
         this.targetBucket = targetBucket;
+        this.targetKmsKeyId = targetKmsKeyId;
         this.targetKeyPrefix = targetKeyPrefix;
         this.tempDir = tempDir;
         this.cryptoMode = cryptoMode;
         this.cryptoStorageMode = cryptoStorageMode;
         this.resultStringMaxLength = resultStringMaxLength;
         this.copyMetadataKeys = copyMetadataKeys;
+        this.metadataCopyDebug = metadataCopyDebug;
     }
 
     static BatchLambdaConfig fromEnvironment() {
@@ -59,6 +65,7 @@ final class BatchLambdaConfig {
         String sourceKmsRegion = value(env, "SOURCE_KMS_REGION", sourceRegion);
         String sourceKmsKeyId = required(env, "SOURCE_KMS_KEY_ID");
         String targetBucket = required(env, "TARGET_BUCKET");
+        String targetKmsKeyId = trimToEmpty(env.get("TARGET_KMS_KEY_ID"));
         String targetKeyPrefix = trimToEmpty(env.get("TARGET_KEY_PREFIX"));
         Path tempDir = Path.of(value(env, "TEMP_DIR", DEFAULT_TEMP_DIR));
         LegacyCryptoMode cryptoMode =
@@ -67,18 +74,21 @@ final class BatchLambdaConfig {
                 value(env, "CRYPTO_STORAGE_MODE", LegacyCryptoStorageMode.OBJECT_METADATA.name()));
         int resultStringMaxLength = parsePositiveInt(value(env, "RESULT_STRING_MAX_LENGTH", "1024"));
         Set<String> copyMetadataKeys = parseMetadataKeys(env.get("COPY_METADATA_KEYS"));
+        boolean metadataCopyDebug = parseBoolean(value(env, "METADATA_COPY_DEBUG", "false"));
         return new BatchLambdaConfig(
                 sourceRegion,
                 targetRegion,
                 sourceKmsRegion,
                 sourceKmsKeyId,
                 targetBucket,
+                targetKmsKeyId,
                 targetKeyPrefix,
                 tempDir,
                 cryptoMode,
                 cryptoStorageMode,
                 resultStringMaxLength,
-                copyMetadataKeys);
+                copyMetadataKeys,
+                metadataCopyDebug);
     }
 
     String sourceRegion() {
@@ -99,6 +109,10 @@ final class BatchLambdaConfig {
 
     String targetBucket() {
         return targetBucket;
+    }
+
+    String targetKmsKeyId() {
+        return targetKmsKeyId;
     }
 
     String targetKeyPrefix() {
@@ -123,6 +137,10 @@ final class BatchLambdaConfig {
 
     Set<String> copyMetadataKeys() {
         return copyMetadataKeys;
+    }
+
+    boolean metadataCopyDebug() {
+        return metadataCopyDebug;
     }
 
     private static String required(Map<String, String> env, String name) {
@@ -170,6 +188,10 @@ final class BatchLambdaConfig {
 
     static String normalizeMetadataKey(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean parseBoolean(String value) {
+        return Boolean.parseBoolean(value.trim());
     }
 
     enum LegacyCryptoMode {

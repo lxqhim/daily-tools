@@ -15,14 +15,18 @@ import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.KMSEncryptionMaterialsProvider;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.SSEAwsKeyManagementParams;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.Security;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -77,9 +81,14 @@ final class LegacyKmsDecryptCopyProcessor implements BatchTaskProcessor {
                 throw new IOException("Decrypt output file was not created: " + localFile);
             }
             PutObjectRequest putObjectRequest = new PutObjectRequest(config.targetBucket(), targetKey, localFile.toFile());
-            ObjectMetadata targetMetadata = copiedMetadata(sourceMetadata);
-            if (targetMetadata != null) {
-                putObjectRequest.withMetadata(targetMetadata);
+            MetadataCopyResult metadataCopyResult = copiedMetadata(sourceMetadata);
+            logMetadataCopy(task, sourceMetadata, metadataCopyResult);
+            if (metadataCopyResult.metadata() != null) {
+                putObjectRequest.withMetadata(metadataCopyResult.metadata());
+            }
+            if (hasValue(config.targetKmsKeyId())) {
+                putObjectRequest.withSSEAwsKeyManagementParams(
+                        new SSEAwsKeyManagementParams(config.targetKmsKeyId()));
             }
             targetClient.putObject(putObjectRequest);
             return new CopyResult("Copied " + sourceBucket + "/" + sourceKey + " to " + config.targetBucket() + "/"
@@ -89,70 +98,128 @@ final class LegacyKmsDecryptCopyProcessor implements BatchTaskProcessor {
         }
     }
 
-    private ObjectMetadata copiedMetadata(ObjectMetadata sourceMetadata) {
+    private MetadataCopyResult copiedMetadata(ObjectMetadata sourceMetadata) {
         Set<String> keys = config.copyMetadataKeys();
         if (sourceMetadata == null || keys.isEmpty()) {
-            return null;
+            return MetadataCopyResult.empty();
         }
         ObjectMetadata targetMetadata = new ObjectMetadata();
-        boolean copiedSystemMetadata = copySystemMetadata(sourceMetadata, targetMetadata, keys);
-        Map<String, String> userMetadata = copiedUserMetadata(sourceMetadata, keys);
+        Set<String> copiedSystemKeys = copySystemMetadata(sourceMetadata, targetMetadata, keys);
+        UserMetadataCopyResult userMetadataCopy = copiedUserMetadata(sourceMetadata, keys);
+        Map<String, String> userMetadata = userMetadataCopy.metadata();
         if (!userMetadata.isEmpty()) {
             targetMetadata.setUserMetadata(userMetadata);
         }
-        if (!copiedSystemMetadata && userMetadata.isEmpty()) {
-            return null;
+        if (copiedSystemKeys.isEmpty() && userMetadata.isEmpty()) {
+            targetMetadata = null;
         }
-        return targetMetadata;
+        return new MetadataCopyResult(
+                targetMetadata, copiedSystemKeys, userMetadata.keySet(), userMetadataCopy.skippedEncryptionKeys());
     }
 
-    private static boolean copySystemMetadata(
+    private static Set<String> copySystemMetadata(
             ObjectMetadata sourceMetadata, ObjectMetadata targetMetadata, Set<String> keys) {
-        boolean copied = false;
+        Set<String> copied = new LinkedHashSet<>();
         if (keys.contains("content-type") && hasValue(sourceMetadata.getContentType())) {
             targetMetadata.setContentType(sourceMetadata.getContentType());
-            copied = true;
+            copied.add("content-type");
         }
         if (keys.contains("content-encoding") && hasValue(sourceMetadata.getContentEncoding())) {
             targetMetadata.setContentEncoding(sourceMetadata.getContentEncoding());
-            copied = true;
+            copied.add("content-encoding");
         }
         if (keys.contains("content-language") && hasValue(sourceMetadata.getContentLanguage())) {
             targetMetadata.setContentLanguage(sourceMetadata.getContentLanguage());
-            copied = true;
+            copied.add("content-language");
         }
         if (keys.contains("cache-control") && hasValue(sourceMetadata.getCacheControl())) {
             targetMetadata.setCacheControl(sourceMetadata.getCacheControl());
-            copied = true;
+            copied.add("cache-control");
         }
         if (keys.contains("content-disposition") && hasValue(sourceMetadata.getContentDisposition())) {
             targetMetadata.setContentDisposition(sourceMetadata.getContentDisposition());
-            copied = true;
+            copied.add("content-disposition");
         }
         Date expires = sourceMetadata.getHttpExpiresDate();
         if (keys.contains("expires") && expires != null) {
             targetMetadata.setHttpExpiresDate(expires);
-            copied = true;
+            copied.add("expires");
         }
         return copied;
     }
 
-    private static Map<String, String> copiedUserMetadata(ObjectMetadata sourceMetadata, Set<String> keys) {
+    private static UserMetadataCopyResult copiedUserMetadata(ObjectMetadata sourceMetadata, Set<String> keys) {
         Map<String, String> copied = new LinkedHashMap<>();
+        Set<String> skippedEncryptionKeys = new LinkedHashSet<>();
         Map<String, String> sourceUserMetadata = sourceMetadata.getUserMetadata();
         if (sourceUserMetadata == null || sourceUserMetadata.isEmpty()) {
-            return copied;
+            return new UserMetadataCopyResult(copied, skippedEncryptionKeys);
         }
         for (Map.Entry<String, String> entry : sourceUserMetadata.entrySet()) {
             String normalizedKey = BatchLambdaConfig.normalizeMetadataKey(entry.getKey());
             if (isLegacyClientSideEncryptionMetadata(normalizedKey)) {
+                if (keys.contains(normalizedKey) || keys.contains("x-amz-meta-" + normalizedKey)) {
+                    skippedEncryptionKeys.add(normalizedKey);
+                }
                 continue;
             }
             if (keys.contains(normalizedKey) || keys.contains("x-amz-meta-" + normalizedKey)) {
                 copied.put(entry.getKey(), entry.getValue());
             }
         }
-        return copied;
+        return new UserMetadataCopyResult(copied, skippedEncryptionKeys);
+    }
+
+    private void logMetadataCopy(
+            S3BatchTask task, ObjectMetadata sourceMetadata, MetadataCopyResult metadataCopyResult) {
+        if (!config.metadataCopyDebug()) {
+            return;
+        }
+        System.out.println("metadataCopy taskId=" + task.getTaskId()
+                + " enabled=" + !config.copyMetadataKeys().isEmpty()
+                + " requestedKeys=" + config.copyMetadataKeys()
+                + " sourceMetadataPresent=" + (sourceMetadata != null)
+                + " sourceSystemKeys=" + sourceSystemKeys(sourceMetadata)
+                + " sourceUserKeys=" + sourceUserKeys(sourceMetadata)
+                + " copiedSystemKeys=" + metadataCopyResult.copiedSystemKeys()
+                + " copiedUserKeys=" + metadataCopyResult.copiedUserKeys()
+                + " skippedEncryptionKeys=" + metadataCopyResult.skippedEncryptionKeys()
+                + " targetMetadataPresent=" + (metadataCopyResult.metadata() != null));
+    }
+
+    private static List<String> sourceSystemKeys(ObjectMetadata sourceMetadata) {
+        List<String> keys = new ArrayList<>();
+        if (sourceMetadata == null) {
+            return keys;
+        }
+        if (hasValue(sourceMetadata.getContentType())) {
+            keys.add("content-type");
+        }
+        if (hasValue(sourceMetadata.getContentEncoding())) {
+            keys.add("content-encoding");
+        }
+        if (hasValue(sourceMetadata.getContentLanguage())) {
+            keys.add("content-language");
+        }
+        if (hasValue(sourceMetadata.getCacheControl())) {
+            keys.add("cache-control");
+        }
+        if (hasValue(sourceMetadata.getContentDisposition())) {
+            keys.add("content-disposition");
+        }
+        if (sourceMetadata.getHttpExpiresDate() != null) {
+            keys.add("expires");
+        }
+        return keys;
+    }
+
+    private static Set<String> sourceUserKeys(ObjectMetadata sourceMetadata) {
+        if (sourceMetadata == null
+                || sourceMetadata.getUserMetadata() == null
+                || sourceMetadata.getUserMetadata().isEmpty()) {
+            return Set.of();
+        }
+        return sourceMetadata.getUserMetadata().keySet();
     }
 
     private static boolean isLegacyClientSideEncryptionMetadata(String normalizedKey) {
@@ -352,4 +419,16 @@ final class LegacyKmsDecryptCopyProcessor implements BatchTaskProcessor {
     }
 
     private record CopyResult(String message) {}
+
+    private record MetadataCopyResult(
+            ObjectMetadata metadata,
+            Set<String> copiedSystemKeys,
+            Set<String> copiedUserKeys,
+            Set<String> skippedEncryptionKeys) {
+        static MetadataCopyResult empty() {
+            return new MetadataCopyResult(null, Set.of(), Set.of(), Set.of());
+        }
+    }
+
+    private record UserMetadataCopyResult(Map<String, String> metadata, Set<String> skippedEncryptionKeys) {}
 }
