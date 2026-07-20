@@ -184,6 +184,28 @@ PermanentFailure
 
 Transient S3/KMS/network failures are returned as `TemporaryFailure` so S3 Batch can retry them. Invalid input and unexpected validation failures are returned as `PermanentFailure`.
 
+## Download Manifest CSV Files
+
+The standalone Python script `scripts/download_manifest_csvs.py` downloads every CSV object in a JSON manifest `files` array. It does not depend on the Java project or Maven. Python 3 and `boto3` are the only runtime requirements.
+
+```bash
+python3 -m pip install boto3
+python3 scripts/download_manifest_csvs.py \
+  s3://manifest-bucket/path/manifest.json \
+  --output-dir ./manifest-csvs
+```
+
+Add `--merge` to decompress any `.gz` parts and concatenate all downloaded CSV data into `manifest-csvs/merged.csv`:
+
+```bash
+python3 scripts/download_manifest_csvs.py \
+  s3://manifest-bucket/path/manifest.json \
+  --output-dir ./manifest-csvs \
+  --merge
+```
+
+Use `--merged-output ./all.csv` to choose the merged file path. For a local manifest, the script uses `destinationBucket` when present; otherwise pass `--csv-bucket`. AWS credentials use the normal boto3 credential chain, with optional `--profile` and `--region` arguments.
+
 ## IAM
 
 Lambda execution role needs:
