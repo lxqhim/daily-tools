@@ -69,6 +69,44 @@ Ephemeral storage:
 Set /tmp storage above your largest decrypted object size, plus headroom.
 ```
 
+## Key Rename Lambda
+
+Use this handler when an S3 Batch Operations job must copy keys such as
+`HK/XXX/BAR/file.txt` to `HK/XXX/BAR_PRINT/file.txt` in the same bucket, while retaining
+the source objects:
+
+```text
+com.dailytools.s3migration.batchlambda.S3BatchKeyRenameHandler::handleRequest
+```
+
+Set these Lambda environment variables:
+
+```text
+RENAME_SOURCE_SEGMENT=BAR
+RENAME_TARGET_SEGMENT=BAR_PRINT
+RENAME_SOURCE_SEGMENT_INDEX=3
+AWS_REGION=us-east-1
+```
+
+The Lambda obtains the source object key from each Batch task and accepts only keys
+whose segment at `RENAME_SOURCE_SEGMENT_INDEX` matches `RENAME_SOURCE_SEGMENT`. The
+index is one-based and defaults to `3`; all other key segments are retained. This prevents
+an identically named segment at another depth from being renamed. For example, with
+`RENAME_SOURCE_SEGMENT_INDEX=4`, `HK/BAR/XXX/BAR/file.txt` becomes
+`HK/BAR/XXX/BAR_PRINT/file.txt`; the `BAR` at the second segment is unchanged. The Lambda
+returns a permanent failure for objects that do not match the configured segment at the
+configured depth. It uses S3 `CopyObject` in the task's source bucket and does not call
+`DeleteObject`.
+
+The Batch manifest still has to enumerate the source objects; S3 prefixes do not support
+a wildcard at the placeholder position. Generate the manifest from S3 Inventory/Athena or
+from a controlled object-listing process, and include only the intended
+`HK/*/BAR/*` objects where possible.
+
+The Lambda execution role requires `s3:GetObject` on source keys and `s3:PutObject` on
+the renamed destination keys. When the bucket uses SSE-KMS, grant the corresponding KMS
+permissions to copy the encrypted objects.
+
 ## Environment Variables
 
 Required:

@@ -8,7 +8,7 @@
     <artifactId>s3-lambda</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>s3-lambda</name>
-    <description>S3 Batch Operations Lambda for legacy KMS client-side decrypt and copy</description>
+    <description>S3 Batch Operations Lambdas for client-side decrypt-copy and S3 key rename-copy</description>
 
     <properties>
         <java.version>21</java.version>
