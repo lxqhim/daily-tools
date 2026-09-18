@@ -30,6 +30,8 @@ final class S3KeyRenameProcessor implements BatchTaskProcessor {
         try {
             CopyResult result = copyToRenamedKey(task);
             return result(task.getTaskId(), BatchResultCode.SUCCEEDED, result.message());
+        } catch (NonMatchingKeyException exception) {
+            return result(task.getTaskId(), BatchResultCode.SUCCEEDED, "Skipped: " + exception.getMessage());
         } catch (Exception exception) {
             BatchResultCode resultCode = isTemporary(exception)
                     ? BatchResultCode.TEMPORARY_FAILURE
@@ -55,7 +57,7 @@ final class S3KeyRenameProcessor implements BatchTaskProcessor {
         String[] segments = sourceKey.split("/", -1);
         int sourceSegmentArrayIndex = config.sourceSegmentIndex() - 1;
         if (segments.length <= sourceSegmentArrayIndex || !config.sourceSegment().equals(segments[sourceSegmentArrayIndex])) {
-            throw new IllegalArgumentException("Key does not match expected pattern "
+            throw new NonMatchingKeyException("Key does not match expected pattern "
                     + "with " + config.sourceSegment() + " at segment " + config.sourceSegmentIndex() + ": " + sourceKey);
         }
         segments[sourceSegmentArrayIndex] = config.targetSegment();
@@ -155,4 +157,10 @@ final class S3KeyRenameProcessor implements BatchTaskProcessor {
     }
 
     private record CopyResult(String message) {}
+
+    private static final class NonMatchingKeyException extends RuntimeException {
+        private NonMatchingKeyException(String message) {
+            super(message);
+        }
+    }
 }

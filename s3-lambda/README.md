@@ -59,7 +59,7 @@ the configured source segment at `RENAME_SOURCE_SEGMENT_INDEX`, the Lambda repla
 with `RENAME_TARGET_SEGMENT` and issues an S3 server-side `CopyObject` in the same bucket.
 The index is one-based and counts slash-delimited key segments; its default is `3`. For example,
 `HK/XXX/BAR/file.txt` becomes `HK/XXX/BAR_PRINT/file.txt`. Objects outside that structure
-are reported as permanent failures and are not copied. The source object is never deleted.
+are reported as successfully skipped and are not copied. The source object is never deleted.
 
 ## Environment Variables
 

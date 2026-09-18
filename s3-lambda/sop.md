@@ -45,7 +45,8 @@ RESULT_STRING_MAX_LENGTH=1024
 `RENAME_SOURCE_SEGMENT_INDEX` is one-based. Lambda replaces the configured source segment
 only when it occurs at that precise slash-delimited key position. For example, at index 4,
 `HK/BAR/XXX/BAR/file.txt` becomes `HK/BAR/XXX/BAR_PRINT/file.txt`; the `BAR` in the
-second segment remains unchanged.
+second segment remains unchanged. A key that does not match this condition is returned as
+`Succeeded` with a `Skipped:` result message and is not copied.
 
 ## 2. Create the Lambda execution role
 

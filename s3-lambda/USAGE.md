@@ -94,9 +94,9 @@ index is one-based and defaults to `3`; all other key segments are retained. Thi
 an identically named segment at another depth from being renamed. For example, with
 `RENAME_SOURCE_SEGMENT_INDEX=4`, `HK/BAR/XXX/BAR/file.txt` becomes
 `HK/BAR/XXX/BAR_PRINT/file.txt`; the `BAR` at the second segment is unchanged. The Lambda
-returns a permanent failure for objects that do not match the configured segment at the
-configured depth. It uses S3 `CopyObject` in the task's source bucket and does not call
-`DeleteObject`.
+returns `Succeeded` with a `Skipped:` result message for objects that do not match the
+configured segment at the configured depth, without calling S3 `CopyObject`. It uses S3
+`CopyObject` in the task's source bucket and does not call `DeleteObject`.
 
 The Batch manifest still has to enumerate the source objects; S3 prefixes do not support
 a wildcard at the placeholder position. Generate the manifest from S3 Inventory/Athena or

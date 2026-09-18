@@ -60,13 +60,14 @@ class S3KeyRenameProcessorTest {
     }
 
     @Test
-    void rejectsKeyWithoutTheConfiguredSourceSegmentAtTheConfiguredIndexWithoutCopying() {
+    void skipsKeyWithoutTheConfiguredSourceSegmentAtTheConfiguredIndexWithoutCopying() {
         AmazonS3 client = mock(AmazonS3.class);
         S3KeyRenameProcessor processor = new S3KeyRenameProcessor(client, config(Map.of()));
 
         S3BatchTaskResult result = processor.process(task("task-1", "arn:aws:s3:::bucket", "HK/ABC/OTHER/file.txt", null));
 
-        assertThat(result.getResultCode()).isEqualTo("PermanentFailure");
+        assertThat(result.getResultCode()).isEqualTo("Succeeded");
+        assertThat(result.getResultString()).contains("Skipped: Key does not match");
         assertThat(result.getResultString()).contains("BAR at segment 3");
         verify(client, never()).copyObject(any(CopyObjectRequest.class));
     }
